@@ -10,7 +10,7 @@
 // Classification runs in a separate step — this worker is ingest-only.
 
 import { db, closeDb } from '../lib/db';
-import { parseAtom, type AtomEntry } from '../lib/atom';
+import { parseAtom, type AtomEntry } from '../lib/feed';
 
 const EDGAR_URL =
   'https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=8-K&company=&dateb=&owner=include&count=40&output=atom';

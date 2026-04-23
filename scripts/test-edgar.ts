@@ -6,7 +6,7 @@
 //
 // Requires DATABASE_URL and EDGAR_USER_AGENT.
 
-import { parseAtom } from '../lib/atom';
+import { parseAtom } from '../lib/feed';
 import { extractAccession, toFiling, pollOnce, fetchEdgarAtom } from '../workers/edgar';
 import { db, closeDb } from '../lib/db';
 

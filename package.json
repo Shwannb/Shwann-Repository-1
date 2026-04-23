@@ -14,9 +14,12 @@
     "worker:edgar:once": "tsx workers/edgar.ts --once",
     "worker:classifier": "tsx workers/classifier.ts",
     "worker:classifier:once": "tsx workers/classifier.ts --once",
+    "worker:rss": "tsx workers/rss.ts",
+    "worker:rss:once": "tsx workers/rss.ts --once",
     "test:edgar": "tsx scripts/test-edgar.ts",
     "test:classifier": "tsx scripts/test-classifier.ts",
-    "test:api": "tsx scripts/test-api.ts"
+    "test:api": "tsx scripts/test-api.ts",
+    "test:rss": "tsx scripts/test-rss.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
