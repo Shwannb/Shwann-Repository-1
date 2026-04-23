@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+/*
+  Safyr Terminal — Bloomberg-style dark theme.
+
+  Defined as tokens in @theme so Tailwind v4 emits utilities like
+  bg-surface, text-amber, border-grid, etc. Keep the palette tight —
+  a Bloomberg terminal uses at most five or six colors.
+*/
+@theme {
+  --color-bg:           #050505;
+  --color-surface:      #0d0d0d;
+  --color-surface-2:    #141414;
+  --color-grid:         #1f1f1f;
+  --color-grid-strong:  #2a2a2a;
+  --color-fg:           #e6e6e6;
+  --color-fg-dim:       #8a8a8a;
+  --color-fg-mute:      #5a5a5a;
+  --color-amber:        #ff9900;
+  --color-amber-dim:    #a86500;
+  --color-pos:          #00d68f;
+  --color-neg:          #ff3b5c;
+  --color-info:         #00c2ff;
+
+  --font-mono:          ui-monospace, "JetBrains Mono", "IBM Plex Mono",
+                        Menlo, Monaco, Consolas, monospace;
+}
+
+html, body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum", "zero"; /* tabular numerals + slashed zero */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar — matte dark, thin, matches the grid lines. */
+* { scrollbar-width: thin; scrollbar-color: var(--color-grid-strong) transparent; }
+*::-webkit-scrollbar        { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb  { background: var(--color-grid-strong); }
+*::-webkit-scrollbar-track  { background: transparent; }
+
+/* Native form controls — strip defaults so our Tailwind styling shows. */
+input, select, button {
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+select option { background: var(--color-surface); color: var(--color-fg); }
