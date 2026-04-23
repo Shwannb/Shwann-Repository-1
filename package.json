@@ -15,7 +15,8 @@
     "worker:classifier": "tsx workers/classifier.ts",
     "worker:classifier:once": "tsx workers/classifier.ts --once",
     "test:edgar": "tsx scripts/test-edgar.ts",
-    "test:classifier": "tsx scripts/test-classifier.ts"
+    "test:classifier": "tsx scripts/test-classifier.ts",
+    "test:api": "tsx scripts/test-api.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

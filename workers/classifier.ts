@@ -6,6 +6,11 @@
 
 import { db, closeDb } from '../lib/db';
 import { claudeClassifier, CLASSIFIER_MODEL, type Classifier } from '../lib/classifier';
+import { DEAL_TYPES } from '../lib/taxonomy';
+
+// deal_type values we promote into the deals table. 'unknown'/'other' stay in
+// news_items only — not every classified item is a trackable transaction.
+const PROMOTABLE_DEAL_TYPES = DEAL_TYPES.filter((t) => t !== 'unknown' && t !== 'other');
 
 const POLL_INTERVAL_MS = 30 * 1000;        // 30s — we want to catch up quickly
 const BATCH_SIZE       = 50;
@@ -37,17 +42,56 @@ async function classifyAndStore(row: UnclassifiedRow, classify: Classifier): Pro
     summary: row.summary,
     sourceKind: row.source_kind,
   });
-  await db().query(
-    `UPDATE news_items
-        SET sector           = $2,
-            geography        = $3,
-            deal_type        = $4,
-            deal_size_usd    = $5,
-            classified_at    = NOW(),
-            classifier_model = $6
-      WHERE id = $1`,
-    [row.id, result.sector, result.geography, result.deal_type, result.deal_size_usd, CLASSIFIER_MODEL]
-  );
+
+  // Classification write + (conditional) promotion run in a single transaction
+  // so a crash mid-promotion never leaves a classified news_item without its
+  // deal row.
+  const client = await db().connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `UPDATE news_items
+          SET sector           = $2,
+              geography        = $3,
+              deal_type        = $4,
+              deal_size_usd    = $5,
+              classified_at    = NOW(),
+              classifier_model = $6
+        WHERE id = $1`,
+      [row.id, result.sector, result.geography, result.deal_type, result.deal_size_usd, CLASSIFIER_MODEL]
+    );
+    if ((PROMOTABLE_DEAL_TYPES as readonly string[]).includes(result.deal_type)) {
+      // Idempotency: if this news_item is already linked to a deal, skip.
+      // In practice drainOnce only sees unclassified rows, but an explicit
+      // re-classification (model upgrade) would otherwise duplicate.
+      const { rows: existing } = await client.query(
+        `SELECT 1 FROM deal_news_items WHERE news_item_id = $1 LIMIT 1`,
+        [row.id]
+      );
+      if (existing.length === 0) {
+        const { rows: dealRows } = await client.query<{ id: string }>(
+          `INSERT INTO deals
+             (headline, sector, geography, deal_type, deal_size_usd,
+              announced_at, primary_source_id, primary_url)
+           SELECT title, $2, $3, $4, $5, published_at, source_id, url
+             FROM news_items WHERE id = $1
+           RETURNING id`,
+          [row.id, result.sector, result.geography, result.deal_type, result.deal_size_usd]
+        );
+        await client.query(
+          `INSERT INTO deal_news_items (deal_id, news_item_id) VALUES ($1, $2)
+            ON CONFLICT DO NOTHING`,
+          [dealRows[0].id, row.id]
+        );
+      }
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Simple bounded-concurrency runner. No external dep.
