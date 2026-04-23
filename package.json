@@ -1,0 +1,36 @@
+{
+  "name": "safyr-deal-terminal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Safyr Capital Partners — live deal-sourcing terminal (Phase 1)",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "db:migrate": "tsx scripts/migrate.ts",
+    "worker:edgar": "tsx workers/edgar.ts",
+    "worker:edgar:once": "tsx workers/edgar.ts --once",
+    "test:edgar": "tsx scripts/test-edgar.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "@upstash/redis": "^1.34.0",
+    "next": "15.1.0",
+    "pg": "^8.13.1",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
