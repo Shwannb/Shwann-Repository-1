@@ -94,6 +94,11 @@ export default function Terminal() {
   // results of a newer one after the user changes filters.
   const inflight = useRef<AbortController | null>(null);
 
+  // Live push indicator — pulses briefly each time the WebSocket pushes a
+  // new_deal that matches the current filter. Purely visual; the actual row
+  // insertion is driven by a refresh triggered from the ws handler below.
+  const [liveTick, setLiveTick] = useState(0);
+
   const fetchAll = useCallback(async () => {
     inflight.current?.abort();
     const ctrl = new AbortController();
@@ -129,11 +134,52 @@ export default function Terminal() {
     }
   }, [filters]);
 
-  // Fetch on mount, on filter change, and every 30s.
+  // Fetch on mount, on filter change, and every 30s as a fallback.
   useEffect(() => { void fetchAll(); }, [fetchAll]);
   useEffect(() => {
     const id = setInterval(() => { void fetchAll(); }, 30_000);
     return () => clearInterval(id);
+  }, [fetchAll]);
+
+  // WebSocket push — connects once per mount, reconnects with backoff on
+  // close. When a new_deal frame arrives we pulse the indicator and trigger
+  // a fetch so the table reflects the new row (and respects the active
+  // filter server-side rather than us shipping filter logic to the client).
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const port = process.env.NEXT_PUBLIC_WS_PORT ?? '3030';
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${scheme}://${window.location.hostname}:${port}/ws/deals`;
+    let ws: WebSocket | null = null;
+    let retry = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
+    const connect = () => {
+      if (closed) return;
+      ws = new WebSocket(url);
+      ws.onopen = () => { retry = 0; };
+      ws.onmessage = (ev) => {
+        try {
+          const frame = JSON.parse(ev.data as string) as { type?: string };
+          if (frame.type === 'new_deal') {
+            setLiveTick((t) => t + 1);
+            void fetchAll();
+          }
+        } catch { /* ignore malformed frames */ }
+      };
+      ws.onclose = () => {
+        if (closed) return;
+        const delay = Math.min(30_000, 500 * 2 ** retry++);
+        timer = setTimeout(connect, delay);
+      };
+      ws.onerror = () => { ws?.close(); };
+    };
+    connect();
+    return () => {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      ws?.close();
+    };
   }, [fetchAll]);
 
   const activeFilterCount = useMemo(
@@ -143,7 +189,7 @@ export default function Terminal() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header lastRefresh={lastRefresh} loading={loading} />
+      <Header lastRefresh={lastRefresh} loading={loading} liveTick={liveTick} />
 
       <FilterBar
         filters={filters}
@@ -176,13 +222,21 @@ export default function Terminal() {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function Header({ lastRefresh, loading }: { lastRefresh: Date; loading: boolean }) {
+function Header({ lastRefresh, loading, liveTick }: { lastRefresh: Date; loading: boolean; liveTick: number }) {
   const [now, setNow] = useState<Date | null>(null);
+  const [pulse, setPulse] = useState(false);
   useEffect(() => {
     setNow(new Date());
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+  // Flash the PUSH indicator for 400ms on every new_deal frame.
+  useEffect(() => {
+    if (liveTick === 0) return;
+    setPulse(true);
+    const id = setTimeout(() => setPulse(false), 400);
+    return () => clearTimeout(id);
+  }, [liveTick]);
   return (
     <header className="flex items-center justify-between border-b border-grid-strong bg-surface px-3 py-2">
       <div className="flex items-center gap-3">
@@ -190,6 +244,10 @@ function Header({ lastRefresh, loading }: { lastRefresh: Date; loading: boolean 
         <span className="text-fg-dim text-[11px]">DEAL TERMINAL</span>
       </div>
       <div className="flex items-center gap-4 text-[11px] text-fg-dim">
+        <span className={pulse ? 'text-amber' : 'text-fg-mute'} data-testid="push-indicator">
+          {pulse ? '◆ PUSH' : '◇ ws'}
+          {liveTick > 0 && <span className="text-fg-mute ml-1">[{liveTick}]</span>}
+        </span>
         <span className={loading ? 'text-info' : 'text-pos'}>
           {loading ? '● SYNC' : '● LIVE'}
         </span>

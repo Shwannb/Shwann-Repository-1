@@ -16,10 +16,22 @@
     "worker:classifier:once": "tsx workers/classifier.ts --once",
     "worker:rss": "tsx workers/rss.ts",
     "worker:rss:once": "tsx workers/rss.ts --once",
+    "worker:ch": "tsx workers/companies_house.ts",
+    "worker:ch:once": "tsx workers/companies_house.ts --once",
+    "worker:newsapi": "tsx workers/newsapi.ts",
+    "worker:newsapi:once": "tsx workers/newsapi.ts --once",
+    "worker:gdelt": "tsx workers/gdelt.ts",
+    "worker:gdelt:once": "tsx workers/gdelt.ts --once",
+    "worker:ws": "tsx workers/ws.ts",
     "test:edgar": "tsx scripts/test-edgar.ts",
     "test:classifier": "tsx scripts/test-classifier.ts",
     "test:api": "tsx scripts/test-api.ts",
-    "test:rss": "tsx scripts/test-rss.ts"
+    "test:rss": "tsx scripts/test-rss.ts",
+    "test:ch": "tsx scripts/test-ch.ts",
+    "test:newsapi": "tsx scripts/test-newsapi.ts",
+    "test:gdelt": "tsx scripts/test-gdelt.ts",
+    "test:ws": "tsx scripts/test-ws.ts",
+    "test:all": "for t in edgar classifier api rss ch newsapi gdelt ws; do npx tsx scripts/test-$t.ts || exit 1; done"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",
