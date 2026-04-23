@@ -12,10 +12,13 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "worker:edgar": "tsx workers/edgar.ts",
     "worker:edgar:once": "tsx workers/edgar.ts --once",
-    "test:edgar": "tsx scripts/test-edgar.ts"
+    "worker:classifier": "tsx workers/classifier.ts",
+    "worker:classifier:once": "tsx workers/classifier.ts --once",
+    "test:edgar": "tsx scripts/test-edgar.ts",
+    "test:classifier": "tsx scripts/test-classifier.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.65.0",
+    "@anthropic-ai/sdk": "^0.90.0",
     "@upstash/redis": "^1.34.0",
     "next": "15.1.0",
     "pg": "^8.13.1",
