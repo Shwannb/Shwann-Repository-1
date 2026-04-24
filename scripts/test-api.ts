@@ -205,13 +205,56 @@ async function testNewsEndpoint() {
   console.log('[5/5] GET /api/news: sector filter matches Deals filter, unknown-type rows stay out of deals: OK');
 }
 
+async function testCsvExport() {
+  const { GET: dealsGET } = await import('../app/api/deals/route');
+  const { GET: newsGET }  = await import('../app/api/news/route');
+
+  // deals format=csv
+  let res = await dealsGET(new Request('http://localhost/api/deals?format=csv'));
+  assert(res.status === 200, `deals csv status ${res.status}`);
+  assert(res.headers.get('Content-Type')?.startsWith('text/csv'), 'content-type not csv');
+  assert(res.headers.get('Content-Disposition')?.includes('attachment'), 'disposition not attachment');
+  const csv = await res.text();
+  const lines = csv.split('\r\n').filter((l) => l.length > 0);
+  assert(lines[0].startsWith('id,announced_at,headline,sector,geography,deal_type'), `bad header: ${lines[0]}`);
+  assert(lines.length - 1 >= 3, `expected >= 3 data rows, got ${lines.length - 1}`);
+
+  // Filter applied: sector=fintech only returns 1 row (test-api-2 VC round).
+  res = await dealsGET(new Request('http://localhost/api/deals?sector=fintech&format=csv'));
+  const fintechCsv = await res.text();
+  const fintechLines = fintechCsv.split('\r\n').filter((l) => l.length > 0);
+  assert(fintechLines.length - 1 === 1, `fintech rows: expected 1, got ${fintechLines.length - 1}`);
+  assert(fintechLines[1].includes('fintech'), 'fintech row missing sector');
+
+  // CSV quoting — headline with a comma must be quoted. Use a row we inserted.
+  const { rows: hasComma } = await db().query<{ total: string }>(
+    `SELECT COUNT(*)::text AS total FROM deals WHERE headline LIKE '%,%'`
+  );
+  if (Number(hasComma[0].total) > 0) {
+    // At least one headline has a comma — verify CSV quotes it.
+    const sample = lines.find((l) => l.includes('","'));
+    assert(sample !== undefined, 'expected quoted field when commas are present');
+  }
+
+  // Limit overrun for csv should 400 above CSV_LIMIT_MAX (5000).
+  res = await dealsGET(new Request('http://localhost/api/deals?format=csv&limit=9999'));
+  assert(res.status === 400, `csv over-limit should 400, got ${res.status}`);
+
+  // news csv — sanity
+  res = await newsGET(new Request('http://localhost/api/news?format=csv&sector=fintech'));
+  assert(res.status === 200, `news csv status ${res.status}`);
+  assert(res.headers.get('Content-Type')?.startsWith('text/csv'), 'news ct not csv');
+
+  console.log('[8/9] CSV export: headers, filter honored, over-limit 400: OK');
+}
+
 async function testHealthEndpoint() {
   const { GET } = await import('../app/api/health/route');
   const res = await GET();
   const json = await res.json() as { status: string; db: string };
   assert(res.status === 200, `health status ${res.status}`);
   assert(json.status === 'ok' && json.db === 'up', `health body: ${JSON.stringify(json)}`);
-  console.log('[6/7] GET /api/health: 200 ok/up: OK');
+  console.log('[6/9] GET /api/health: 200 ok/up: OK');
 }
 
 async function testDealDetailEndpoint() {
@@ -244,7 +287,7 @@ async function testDealDetailEndpoint() {
   res = await GET(new Request(`http://localhost/api/deals/${bogus}`), { params: Promise.resolve({ id: bogus }) });
   assert(res.status === 404, `missing deal should 404, got ${res.status}`);
 
-  console.log('[7/7] GET /api/deals/[id]: detail + sources, 400/404 paths: OK');
+  console.log('[9/9] GET /api/deals/[id]: detail + sources, 400/404 paths: OK');
 }
 
 async function main() {
@@ -253,6 +296,7 @@ async function main() {
   await testDealsEndpoint();
   await testNewsEndpoint();
   await testHealthEndpoint();
+  await testCsvExport();
   await testDealDetailEndpoint();
 
   await cleanState();

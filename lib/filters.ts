@@ -22,6 +22,11 @@ const isoDate = z
   .refine((s) => !Number.isNaN(Date.parse(s)), 'must be an ISO 8601 date')
   .transform((s) => new Date(s));
 
+// CSV exports allow a higher row ceiling than JSON pages — an analyst pulling
+// data into Excel wants the full filter set, not a paginated slice.
+export const JSON_LIMIT_MAX = 200;
+export const CSV_LIMIT_MAX  = 5000;
+
 export const FilterSchema = z.object({
   sector:     z.enum(SECTORS).optional(),
   geography:  z.enum(GEOGRAPHIES).optional(),
@@ -30,8 +35,9 @@ export const FilterSchema = z.object({
   max_size:   numericString.optional(),
   from:       isoDate.optional(),
   to:         isoDate.optional(),
-  limit:      positiveInt.pipe(z.number().max(200)).optional(),
+  limit:      positiveInt.pipe(z.number().max(CSV_LIMIT_MAX)).optional(),
   offset:     positiveInt.optional(),
+  format:     z.enum(['json', 'csv']).optional(),
 });
 
 export type Filters = z.infer<typeof FilterSchema>;
@@ -41,6 +47,7 @@ export interface FilterResult {
   filters: Filters;
   limit: number;
   offset: number;
+  format: 'json' | 'csv';
 }
 export interface FilterError {
   ok: false;
@@ -49,7 +56,7 @@ export interface FilterError {
 
 export function parseFilters(params: URLSearchParams): FilterResult | FilterError {
   const raw: Record<string, string> = {};
-  for (const key of ['sector', 'geography', 'deal_type', 'min_size', 'max_size', 'from', 'to', 'limit', 'offset']) {
+  for (const key of ['sector', 'geography', 'deal_type', 'min_size', 'max_size', 'from', 'to', 'limit', 'offset', 'format']) {
     const v = params.get(key);
     if (v !== null && v !== '') raw[key] = v;
   }
@@ -65,10 +72,18 @@ export function parseFilters(params: URLSearchParams): FilterResult | FilterErro
   if (f.from && f.to && f.from > f.to) {
     return { ok: false, message: 'from must be <= to' };
   }
+  const format = f.format ?? 'json';
+  const defaultLimit = format === 'csv' ? CSV_LIMIT_MAX : 50;
+  const cap = format === 'csv' ? CSV_LIMIT_MAX : JSON_LIMIT_MAX;
+  const requested = f.limit ?? defaultLimit;
+  if (requested > cap) {
+    return { ok: false, message: `limit: must be <= ${cap} for format=${format}` };
+  }
   return {
     ok: true,
     filters: f,
-    limit: f.limit ?? 50,
+    limit: requested,
     offset: f.offset ?? 0,
+    format,
   };
 }

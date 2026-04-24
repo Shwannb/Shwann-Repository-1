@@ -251,6 +251,7 @@ export default function Terminal() {
         onClear={() => setFilters(EMPTY_FILTERS)}
         activeCount={activeFilterCount}
         firstFilterRef={firstFilterRef}
+        tab={tab}
       />
 
       <nav className="flex border-b border-grid bg-surface">
@@ -345,15 +346,25 @@ function TabButton({ active, onClick, label, count }: { active: boolean; onClick
 // ────────────────────────────────────────────────────────────────────────────
 
 function FilterBar({
-  filters, onChange, onClear, activeCount, firstFilterRef,
+  filters, onChange, onClear, activeCount, firstFilterRef, tab,
 }: {
   filters: Filters;
   onChange: (next: Filters) => void;
   onClear: () => void;
   activeCount: number;
   firstFilterRef: React.RefObject<HTMLSelectElement | null>;
+  tab: Tab;
 }) {
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) => onChange({ ...filters, [k]: v });
+
+  // Build an export URL carrying the current filter set. The browser handles
+  // the download via Content-Disposition; no JS fetch required.
+  const exportHref = (() => {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) if (v) p.set(k, v);
+    p.set('format', 'csv');
+    return `/api/${tab}?${p.toString()}`;
+  })();
 
   return (
     <section
@@ -369,14 +380,25 @@ function FilterBar({
       <FilterInput label="FROM"       value={filters.from}     onChange={(v) => set('from', v)}     placeholder="YYYY-MM-DD" type="date" />
       <FilterInput label="TO"         value={filters.to}       onChange={(v) => set('to', v)}       placeholder="YYYY-MM-DD" type="date" />
 
-      <button
-        type="button"
-        onClick={onClear}
-        disabled={activeCount === 0}
-        className="ml-auto px-2 py-1 border border-grid text-fg-dim hover:text-amber hover:border-amber disabled:opacity-30 disabled:cursor-not-allowed"
-      >
-        CLEAR{activeCount > 0 ? ` [${activeCount}]` : ''}
-      </button>
+      <div className="ml-auto flex items-center gap-2">
+        <a
+          href={exportHref}
+          download
+          className="px-2 py-1 border border-grid text-fg-dim hover:text-amber hover:border-amber"
+          title={`Export current ${tab} filter as CSV`}
+          data-testid="export-csv"
+        >
+          EXPORT CSV
+        </a>
+        <button
+          type="button"
+          onClick={onClear}
+          disabled={activeCount === 0}
+          className="px-2 py-1 border border-grid text-fg-dim hover:text-amber hover:border-amber disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          CLEAR{activeCount > 0 ? ` [${activeCount}]` : ''}
+        </button>
+      </div>
     </section>
   );
 }
