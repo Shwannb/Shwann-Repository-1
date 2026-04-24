@@ -97,6 +97,44 @@ export async function queryDeals(
   return { rows, total: Number(total[0].count) };
 }
 
+export interface DealSource {
+  news_item_id: string;
+  source_id: string;
+  external_id: string;
+  url: string;
+  title: string;
+  summary: string | null;
+  published_at: string;
+}
+
+export interface DealWithSources {
+  deal: Deal;
+  sources: DealSource[];
+}
+
+export async function fetchDealWithSources(id: string): Promise<DealWithSources | null> {
+  const { rows: dealRows } = await db().query<Deal>(
+    `SELECT id, headline, sector, geography, deal_type,
+            deal_size_usd::float8 AS deal_size_usd,
+            announced_at, status, primary_source_id, primary_url
+       FROM deals
+      WHERE id = $1`,
+    [id]
+  );
+  if (dealRows.length === 0) return null;
+
+  const { rows: sources } = await db().query<DealSource>(
+    `SELECT n.id AS news_item_id, n.source_id, n.external_id, n.url,
+            n.title, n.summary, n.published_at
+       FROM deal_news_items d
+       JOIN news_items      n ON n.id = d.news_item_id
+      WHERE d.deal_id = $1
+      ORDER BY n.published_at DESC`,
+    [id]
+  );
+  return { deal: dealRows[0], sources };
+}
+
 export async function queryNews(
   filters: Filters,
   limit: number,

@@ -205,11 +205,55 @@ async function testNewsEndpoint() {
   console.log('[5/5] GET /api/news: sector filter matches Deals filter, unknown-type rows stay out of deals: OK');
 }
 
+async function testHealthEndpoint() {
+  const { GET } = await import('../app/api/health/route');
+  const res = await GET();
+  const json = await res.json() as { status: string; db: string };
+  assert(res.status === 200, `health status ${res.status}`);
+  assert(json.status === 'ok' && json.db === 'up', `health body: ${JSON.stringify(json)}`);
+  console.log('[6/7] GET /api/health: 200 ok/up: OK');
+}
+
+async function testDealDetailEndpoint() {
+  const { GET } = await import('../app/api/deals/[id]/route');
+
+  // Find the M&A deal we promoted in testPromotion (test-api-1 → technology/m_and_a).
+  const { rows } = await db().query<{ id: string }>(
+    `SELECT d.id FROM deals d
+       JOIN deal_news_items l ON l.deal_id = d.id
+       JOIN news_items n      ON n.id = l.news_item_id
+      WHERE n.external_id = 'test-api-1'`
+  );
+  assert(rows.length === 1, 'expected one deal linked to test-api-1');
+  const dealId = rows[0].id;
+
+  // Good id → deal + linked sources.
+  let res = await GET(new Request(`http://localhost/api/deals/${dealId}`), { params: Promise.resolve({ id: dealId }) });
+  const good = await res.json() as { deal?: { id: string; headline: string }; sources?: Array<{ external_id: string }> };
+  assert(res.status === 200, `detail status ${res.status}`);
+  assert(good.deal?.id === dealId, 'deal id mismatch');
+  assert(good.sources && good.sources.length >= 1, 'no sources returned');
+  assert(good.sources!.some((s) => s.external_id === 'test-api-1'), 'source linkage missing');
+
+  // Invalid UUID → 400.
+  res = await GET(new Request('http://localhost/api/deals/not-a-uuid'), { params: Promise.resolve({ id: 'not-a-uuid' }) });
+  assert(res.status === 400, `invalid id should 400, got ${res.status}`);
+
+  // Valid UUID but no such deal → 404.
+  const bogus = '00000000-0000-0000-0000-000000000000';
+  res = await GET(new Request(`http://localhost/api/deals/${bogus}`), { params: Promise.resolve({ id: bogus }) });
+  assert(res.status === 404, `missing deal should 404, got ${res.status}`);
+
+  console.log('[7/7] GET /api/deals/[id]: detail + sources, 400/404 paths: OK');
+}
+
 async function main() {
   await testPromotion();
   await testFilterParser();
   await testDealsEndpoint();
   await testNewsEndpoint();
+  await testHealthEndpoint();
+  await testDealDetailEndpoint();
 
   await cleanState();
   console.log('\nAll API checks passed.');

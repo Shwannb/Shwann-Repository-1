@@ -37,6 +37,7 @@ interface Deal {
   deal_type: string | null;
   deal_size_usd: number | null;
   announced_at: string;
+  status: string;
   primary_source_id: string | null;
   primary_url: string | null;
 }
@@ -50,6 +51,21 @@ interface NewsItem {
   sector: string | null;
   geography: string | null;
   deal_type: string | null;
+}
+
+interface DealSource {
+  news_item_id: string;
+  source_id: string;
+  external_id: string;
+  url: string;
+  title: string;
+  summary: string | null;
+  published_at: string;
+}
+
+interface DealWithSources {
+  deal: Deal;
+  sources: DealSource[];
 }
 
 function buildQuery(f: Filters, limit = 100): string {
@@ -98,6 +114,16 @@ export default function Terminal() {
   // new_deal that matches the current filter. Purely visual; the actual row
   // insertion is driven by a refresh triggered from the ws handler below.
   const [liveTick, setLiveTick] = useState(0);
+
+  // Detail drawer state — null when closed, a deal id when open. The drawer
+  // fetches /api/deals/[id] on its own; we just hold the selection here.
+  const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
+
+  // Help overlay toggle (shown when the user presses '?').
+  const [showHelp, setShowHelp] = useState(false);
+
+  // Imperative handles for keyboard shortcuts.
+  const firstFilterRef = useRef<HTMLSelectElement | null>(null);
 
   const fetchAll = useCallback(async () => {
     inflight.current?.abort();
@@ -182,6 +208,34 @@ export default function Terminal() {
     };
   }, [fetchAll]);
 
+  // Keyboard shortcuts (Bloomberg-style quick keys). Only fires when the user
+  // isn't typing into a form control — that's the critical UX invariant here.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isEditable =
+        target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+      if (e.key === 'Escape') {
+        if (showHelp) setShowHelp(false);
+        else if (selectedDealId) setSelectedDealId(null);
+        else if (isEditable) (target as HTMLElement).blur();
+        return;
+      }
+      if (isEditable || e.metaKey || e.ctrlKey || e.altKey) return;
+      switch (e.key) {
+        case 'd': setTab('deals'); break;
+        case 'n': setTab('news'); break;
+        case 'f': firstFilterRef.current?.focus(); e.preventDefault(); break;
+        case 'c': setFilters(EMPTY_FILTERS); break;
+        case 'r': void fetchAll(); break;
+        case '?': setShowHelp((s) => !s); break;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showHelp, selectedDealId, fetchAll]);
+
   const activeFilterCount = useMemo(
     () => Object.values(filters).filter((v) => v !== '').length,
     [filters]
@@ -196,6 +250,7 @@ export default function Terminal() {
         onChange={(next) => setFilters(next)}
         onClear={() => setFilters(EMPTY_FILTERS)}
         activeCount={activeFilterCount}
+        firstFilterRef={firstFilterRef}
       />
 
       <nav className="flex border-b border-grid bg-surface">
@@ -209,13 +264,23 @@ export default function Terminal() {
       </nav>
 
       <main className="flex-1 overflow-auto">
-        {tab === 'deals' ? <DealsTable rows={deals} /> : <NewsTable rows={news} />}
+        {tab === 'deals'
+          ? <DealsTable rows={deals} onSelect={setSelectedDealId} />
+          : <NewsTable rows={news} />}
       </main>
 
       <footer className="border-t border-grid bg-surface px-3 py-1.5 text-[10px] text-fg-mute flex justify-between">
         <span>SAFYR CAPITAL PARTNERS · PHASE 1 · PUBLIC DATA ONLY — contact data via licensed provider in Phase 2</span>
-        <span>v0.1</span>
+        <span className="flex gap-3">
+          <button onClick={() => setShowHelp(true)} className="hover:text-amber" type="button">?</button>
+          <span>v0.1</span>
+        </span>
       </footer>
+
+      {selectedDealId && (
+        <DealDrawer dealId={selectedDealId} onClose={() => setSelectedDealId(null)} />
+      )}
+      {showHelp && <HelpOverlay onClose={() => setShowHelp(false)} />}
     </div>
   );
 }
@@ -280,12 +345,13 @@ function TabButton({ active, onClick, label, count }: { active: boolean; onClick
 // ────────────────────────────────────────────────────────────────────────────
 
 function FilterBar({
-  filters, onChange, onClear, activeCount,
+  filters, onChange, onClear, activeCount, firstFilterRef,
 }: {
   filters: Filters;
   onChange: (next: Filters) => void;
   onClear: () => void;
   activeCount: number;
+  firstFilterRef: React.RefObject<HTMLSelectElement | null>;
 }) {
   const set = <K extends keyof Filters>(k: K, v: Filters[K]) => onChange({ ...filters, [k]: v });
 
@@ -294,7 +360,7 @@ function FilterBar({
       data-testid="filter-bar"
       className="flex flex-wrap items-center gap-2 border-b border-grid bg-surface px-3 py-2 text-[11px]"
     >
-      <FilterSelect label="SECTOR"    value={filters.sector}    onChange={(v) => set('sector', v)}    options={SECTORS}     />
+      <FilterSelect label="SECTOR"    value={filters.sector}    onChange={(v) => set('sector', v)}    options={SECTORS}     selectRef={firstFilterRef} />
       <FilterSelect label="GEO"       value={filters.geography} onChange={(v) => set('geography', v)} options={GEOGRAPHIES} />
       <FilterSelect label="DEAL TYPE" value={filters.deal_type} onChange={(v) => set('deal_type', v)} options={DEAL_TYPES}  />
 
@@ -316,17 +382,19 @@ function FilterBar({
 }
 
 function FilterSelect({
-  label, value, onChange, options,
+  label, value, onChange, options, selectRef,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: readonly string[];
+  selectRef?: React.RefObject<HTMLSelectElement | null>;
 }) {
   return (
     <label className="flex items-center gap-1.5">
       <span className="text-fg-mute">{label}</span>
       <select
+        ref={selectRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="border border-grid px-1.5 py-0.5 text-fg min-w-[9ch] focus:outline-none focus:border-amber"
@@ -365,7 +433,7 @@ function FilterInput({
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function DealsTable({ rows }: { rows: Deal[] }) {
+function DealsTable({ rows, onSelect }: { rows: Deal[]; onSelect: (id: string) => void }) {
   if (rows.length === 0) return <EmptyState message="No deals match the current filters." />;
   return (
     <table data-testid="deals-table" className="w-full text-[11px]">
@@ -382,12 +450,24 @@ function DealsTable({ rows }: { rows: Deal[] }) {
       </thead>
       <tbody>
         {rows.map((d) => (
-          <tr key={d.id} className="border-b border-grid hover:bg-surface-2">
+          <tr
+            key={d.id}
+            onClick={() => onSelect(d.id)}
+            className="border-b border-grid hover:bg-surface-2 cursor-pointer"
+          >
             <Td className="text-fg-dim">{formatDate(d.announced_at)}</Td>
             <Td>
-              {d.primary_url
-                ? <a href={d.primary_url} target="_blank" rel="noreferrer" className="text-fg hover:text-amber">{d.headline}</a>
-                : <span>{d.headline}</span>}
+              <span className="text-fg">{d.headline}</span>
+              {d.primary_url && (
+                <a
+                  href={d.primary_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="ml-2 text-fg-mute hover:text-amber"
+                  aria-label="open primary source"
+                >↗</a>
+              )}
             </Td>
             <Td className="text-info">{labelize(d.sector)}</Td>
             <Td className="text-fg-dim">{labelize(d.geography)}</Td>
@@ -448,4 +528,132 @@ function Th({ children, className = '' }: { children: React.ReactNode; className
 }
 function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <td className={`px-3 py-1.5 align-top ${className}`}>{children}</td>;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+
+function DealDrawer({ dealId, onClose }: { dealId: string; onClose: () => void }) {
+  const [data, setData]   = useState<DealWithSources | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setData(null);
+    setError(null);
+    fetch(`/api/deals/${dealId}`, { cache: 'no-store' })
+      .then(async (r) => {
+        if (!r.ok) throw new Error(((await r.json()) as { error?: string }).error ?? `HTTP ${r.status}`);
+        return r.json() as Promise<DealWithSources>;
+      })
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { cancelled = true; };
+  }, [dealId]);
+
+  return (
+    <div
+      data-testid="deal-drawer"
+      className="fixed inset-0 z-40 flex"
+      onClick={onClose}
+    >
+      <div className="flex-1 bg-black/40" />
+      <aside
+        className="w-[560px] max-w-full bg-surface border-l border-grid-strong flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-grid px-3 py-2 text-[11px]">
+          <span className="text-fg-mute tracking-wider">DEAL DETAIL</span>
+          <button type="button" onClick={onClose} className="text-fg-dim hover:text-amber" aria-label="close">
+            [ESC] ✕
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto p-3 text-[11px]">
+          {error && <div className="text-neg">ERR {error}</div>}
+          {!error && !data && <div className="text-fg-mute">Loading…</div>}
+          {data && (
+            <>
+              <h2 className="text-fg text-[13px] leading-snug mb-3">{data.deal.headline}</h2>
+              <dl className="grid grid-cols-[10ch_1fr] gap-y-1 mb-4">
+                <dt className="text-fg-mute">DATE</dt>       <dd className="text-fg-dim">{formatDate(data.deal.announced_at)}</dd>
+                <dt className="text-fg-mute">SECTOR</dt>     <dd className="text-info">{labelize(data.deal.sector)}</dd>
+                <dt className="text-fg-mute">GEO</dt>        <dd>{labelize(data.deal.geography)}</dd>
+                <dt className="text-fg-mute">TYPE</dt>       <dd className="text-amber">{labelize(data.deal.deal_type)}</dd>
+                <dt className="text-fg-mute">SIZE</dt>       <dd className="text-pos">{formatSize(data.deal.deal_size_usd)}</dd>
+                <dt className="text-fg-mute">STATUS</dt>     <dd>{data.deal.status.toUpperCase()}</dd>
+                <dt className="text-fg-mute">SOURCE</dt>
+                <dd>
+                  {(data.deal.primary_source_id ?? '—').toUpperCase()}
+                  {data.deal.primary_url && (
+                    <a href={data.deal.primary_url} target="_blank" rel="noreferrer" className="ml-2 text-fg-mute hover:text-amber">↗</a>
+                  )}
+                </dd>
+              </dl>
+
+              <div className="text-fg-mute tracking-wider mb-1.5">
+                SOURCES <span className="text-fg-mute">[{data.sources.length}]</span>
+              </div>
+              <ul className="space-y-2">
+                {data.sources.map((s) => (
+                  <li key={s.news_item_id} className="border-l border-grid pl-2">
+                    <a href={s.url} target="_blank" rel="noreferrer" className="text-fg hover:text-amber">
+                      {s.title}
+                    </a>
+                    <div className="text-fg-mute text-[10px] mt-0.5">
+                      {s.source_id.toUpperCase()} · {formatDate(s.published_at)}
+                    </div>
+                    {s.summary && <div className="text-fg-dim mt-1 line-clamp-3">{s.summary}</div>}
+                  </li>
+                ))}
+              </ul>
+
+              <div className="border-t border-grid mt-5 pt-3 text-[10px] text-fg-mute">
+                Contact data for decision-makers at the target / acquirer is not
+                shown: Phase 1 ingests public deal data only. Contact enrichment
+                is Phase 2 and will be sourced from Apollo.io (licensed provider).
+              </div>
+            </>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function HelpOverlay({ onClose }: { onClose: () => void }) {
+  const rows: Array<[string, string]> = [
+    ['D',   'Switch to DEALS tab'],
+    ['N',   'Switch to NEWS tab'],
+    ['F',   'Focus filter bar (sector)'],
+    ['C',   'Clear all filters'],
+    ['R',   'Refresh now'],
+    ['ESC', 'Close drawer / help / blur input'],
+    ['?',   'Toggle this help'],
+    ['Click row', 'Open deal detail drawer'],
+  ];
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 text-[11px]"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface border border-grid-strong p-4 min-w-[340px]"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-fg-mute tracking-wider">KEYBOARD SHORTCUTS</span>
+          <button type="button" onClick={onClose} className="text-fg-dim hover:text-amber">✕</button>
+        </div>
+        <table className="text-[11px]">
+          <tbody>
+            {rows.map(([key, desc]) => (
+              <tr key={key}>
+                <td className="text-amber pr-4 py-0.5 font-bold">{key}</td>
+                <td className="text-fg-dim py-0.5">{desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
