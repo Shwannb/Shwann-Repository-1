@@ -1,0 +1,136 @@
+# Safyr Deal Terminal — full stack, single command.
+#
+# Usage:
+#   cp .env.example .env    # fill in ANTHROPIC_API_KEY (and optionally
+#                            # CH_API_KEY, NEWSAPI_KEY, EDGAR_USER_AGENT)
+#   docker compose up --build
+#
+# Then open http://localhost:3000
+#
+# Services:
+#   postgres   — Postgres 16 (data in a named volume)
+#   migrate    — runs db/migrations/*.sql forward and exits
+#   web        — Next.js frontend + /api/* routes (port 3000)
+#   ws         — WebSocket push server (port 3030, listens to pg_notify)
+#   classifier — Claude-backed classification + deal promotion loop
+#   edgar, rss, ch, newsapi, gdelt — ingestion workers (10-min poll loops)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: safyr
+      POSTGRES_PASSWORD: safyr
+      POSTGRES_DB: safyr
+    volumes:
+      - safyr_pg:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U safyr -d safyr"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+    command: ["npm", "run", "db:migrate"]
+    restart: "no"
+
+  web:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+      NEXT_PUBLIC_WS_PORT: "3030"
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  ws:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+      WS_PORT: "3030"
+    ports:
+      - "3030:3030"
+    command: ["npm", "run", "worker:ws"]
+    restart: unless-stopped
+
+  classifier:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    command: ["npm", "run", "worker:classifier"]
+    restart: unless-stopped
+
+  edgar:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+      EDGAR_USER_AGENT: ${EDGAR_USER_AGENT:-Safyr Deal Terminal compliance@safyr.capital}
+    command: ["npm", "run", "worker:edgar"]
+    restart: unless-stopped
+
+  rss:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+    command: ["npm", "run", "worker:rss"]
+    restart: unless-stopped
+
+  ch:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+      CH_API_KEY: ${CH_API_KEY:-}
+    command: ["sh", "-c", "if [ -z \"$$CH_API_KEY\" ]; then echo '[ch] CH_API_KEY not set, worker idle'; sleep infinity; else npm run worker:ch; fi"]
+    restart: unless-stopped
+
+  newsapi:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+      NEWSAPI_KEY: ${NEWSAPI_KEY:-}
+    command: ["sh", "-c", "if [ -z \"$$NEWSAPI_KEY\" ]; then echo '[newsapi] NEWSAPI_KEY not set, worker idle'; sleep infinity; else npm run worker:newsapi; fi"]
+    restart: unless-stopped
+
+  gdelt:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+    command: ["npm", "run", "worker:gdelt"]
+    restart: unless-stopped
+
+volumes:
+  safyr_pg:

@@ -12,3 +12,4 @@ tsconfig.tsbuildinfo
 next-env.d.ts
 coverage
 .vercel
+dist/
