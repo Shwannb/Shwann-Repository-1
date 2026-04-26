@@ -105,10 +105,11 @@ interface DealWithSources {
   sources: DealSource[];
 }
 
-function buildQuery(f: Filters, limit = 100): string {
+function buildQuery(f: Filters, limit: number, offset = 0): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(f)) if (v) p.set(k, String(v));
   p.set('limit', String(limit));
+  if (offset > 0) p.set('offset', String(offset));
   return p.toString();
 }
 
@@ -141,6 +142,14 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [briefing, setBriefing]           = useState<BriefingResult | null>(null);
   const [briefingLoading, setBriefingLoading] = useState(false);
+
+  // Pagination — page 0 is the first page. Resets to 0 on any filter change
+  // so the user lands on the most relevant rows for the new filter rather
+  // than an empty page-3 of the new result set.
+  const PAGE_SIZE = 50;
+  const [dealsPage, setDealsPage] = useState(0);
+  const [newsPage,  setNewsPage]  = useState(0);
+  useEffect(() => { setDealsPage(0); setNewsPage(0); }, [filters]);
   const [totalDeals, setTotalDeals] = useState(0);
   const [totalNews,  setTotalNews]  = useState(0);
   const [totalSources, setTotalSources] = useState(0);
@@ -174,12 +183,13 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
     setLoading(true);
     setError(null);
     try {
-      const qs = buildQuery(filters);
+      const dealsQs = buildQuery(filters, PAGE_SIZE, dealsPage * PAGE_SIZE);
+      const newsQs  = buildQuery(filters, PAGE_SIZE, newsPage  * PAGE_SIZE);
       const [dealsRes, newsRes, sourcesRes, statsRes] = await Promise.all([
-        fetch(`/api/deals?${qs}`,  { signal: ctrl.signal, cache: 'no-store' }),
-        fetch(`/api/news?${qs}`,   { signal: ctrl.signal, cache: 'no-store' }),
-        fetch(`/api/sources`,      { signal: ctrl.signal, cache: 'no-store' }),
-        fetch(`/api/stats`,        { signal: ctrl.signal, cache: 'no-store' }),
+        fetch(`/api/deals?${dealsQs}`, { signal: ctrl.signal, cache: 'no-store' }),
+        fetch(`/api/news?${newsQs}`,   { signal: ctrl.signal, cache: 'no-store' }),
+        fetch(`/api/sources`,          { signal: ctrl.signal, cache: 'no-store' }),
+        fetch(`/api/stats`,            { signal: ctrl.signal, cache: 'no-store' }),
       ]);
       if (!dealsRes.ok) {
         setError(((await dealsRes.json()) as { error?: string }).error ?? `deals ${dealsRes.status}`);
@@ -209,7 +219,7 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+  }, [filters, dealsPage, newsPage, PAGE_SIZE]);
 
   // Fetch on mount, on filter change, and every 30s as a fallback.
   useEffect(() => { void fetchAll(); }, [fetchAll]);
@@ -372,21 +382,37 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
 
       <main className="flex-1 overflow-auto">
         {tab === 'deals'    && (
-          <DealsTable
-            rows={deals}
-            onSelect={setSelectedDealId}
-            sort={filters.sort}
-            order={filters.order}
-            onSort={(key) => setFilters((f) => toggleSort(f, key))}
-          />
+          <PagedView
+            rows={deals.length}
+            total={totalDeals}
+            page={dealsPage}
+            pageSize={PAGE_SIZE}
+            onPage={setDealsPage}
+          >
+            <DealsTable
+              rows={deals}
+              onSelect={setSelectedDealId}
+              sort={filters.sort}
+              order={filters.order}
+              onSort={(key) => setFilters((f) => toggleSort(f, key))}
+            />
+          </PagedView>
         )}
         {tab === 'news'     && (
-          <NewsTable
-            rows={news}
-            sort={filters.sort}
-            order={filters.order}
-            onSort={(key) => setFilters((f) => toggleSort(f, key))}
-          />
+          <PagedView
+            rows={news.length}
+            total={totalNews}
+            page={newsPage}
+            pageSize={PAGE_SIZE}
+            onPage={setNewsPage}
+          >
+            <NewsTable
+              rows={news}
+              sort={filters.sort}
+              order={filters.order}
+              onSort={(key) => setFilters((f) => toggleSort(f, key))}
+            />
+          </PagedView>
         )}
         {tab === 'sources'  && <SourcesTable rows={sources} />}
         {tab === 'briefing' && (
@@ -704,6 +730,59 @@ function NewsTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+function PagedView({
+  children, rows, total, page, pageSize, onPage,
+}: {
+  children: React.ReactNode;
+  rows: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  onPage: (p: number) => void;
+}) {
+  const start = total === 0 ? 0 : page * pageSize + 1;
+  const end   = page * pageSize + rows;
+  const lastPage = Math.max(0, Math.ceil(total / pageSize) - 1);
+  const canPrev = page > 0;
+  const canNext = page < lastPage;
+  return (
+    <div className="flex flex-col h-full">
+      <div className="flex-1 overflow-auto">{children}</div>
+      <footer
+        data-testid="pagination"
+        className="flex items-center justify-between border-t border-grid bg-surface px-3 py-1.5 text-[10px] text-fg-mute"
+      >
+        <span>
+          {total > 0 ? `Showing ${start.toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}` : 'No matching rows'}
+        </span>
+        <span className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onPage(Math.max(0, page - 1))}
+            disabled={!canPrev}
+            className="px-2 py-0.5 border border-grid hover:text-amber hover:border-amber disabled:opacity-30 disabled:cursor-not-allowed"
+            data-testid="page-prev"
+          >
+            ← PREV
+          </button>
+          <span className="text-fg-dim">
+            page {page + 1} / {Math.max(lastPage + 1, 1)}
+          </span>
+          <button
+            type="button"
+            onClick={() => onPage(Math.min(lastPage, page + 1))}
+            disabled={!canNext}
+            className="px-2 py-0.5 border border-grid hover:text-amber hover:border-amber disabled:opacity-30 disabled:cursor-not-allowed"
+            data-testid="page-next"
+          >
+            NEXT →
+          </button>
+        </span>
+      </footer>
+    </div>
   );
 }
 
