@@ -12,7 +12,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SECTORS, GEOGRAPHIES, DEAL_TYPES } from '@/lib/taxonomy';
 
-type Tab = 'deals' | 'news' | 'sources';
+type Tab = 'deals' | 'news' | 'sources' | 'briefing';
+
+interface BriefingResult {
+  markdown: string;
+  generated_at: string;
+  window_count: number;
+  cached: boolean;
+  error?: string;
+}
 
 interface DashboardStats {
   deals_24h: number;
@@ -127,6 +135,8 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
   const [news,  setNews]  = useState<NewsItem[]>([]);
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [briefing, setBriefing]           = useState<BriefingResult | null>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
   const [totalDeals, setTotalDeals] = useState(0);
   const [totalNews,  setTotalNews]  = useState(0);
   const [totalSources, setTotalSources] = useState(0);
@@ -279,6 +289,7 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
         case 'd': setTab('deals'); break;
         case 'n': setTab('news'); break;
         case 's': setTab('sources'); break;
+        case 'b': setTab('briefing'); break;
         case 'f': firstFilterRef.current?.focus(); e.preventDefault(); break;
         case 'c': setFilters(EMPTY_FILTERS); break;
         case 'r': void fetchAll(); break;
@@ -293,6 +304,35 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
     () => Object.values(filters).filter((v) => v !== '').length,
     [filters]
   );
+
+  // Lazy-load the briefing on the first time the user opens that tab. The
+  // server caches for 30 minutes so repeated tab visits within that window
+  // are cheap, but we don't want to call Claude on every page load when the
+  // user might never click into the briefing.
+  const fetchBriefing = useCallback(async () => {
+    setBriefingLoading(true);
+    try {
+      const res = await fetch('/api/briefing', { cache: 'no-store' });
+      const json = (await res.json()) as BriefingResult;
+      setBriefing(json);
+    } catch (err) {
+      setBriefing({
+        markdown: '',
+        generated_at: new Date().toISOString(),
+        window_count: 0,
+        cached: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      setBriefingLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'briefing' && briefing === null && !briefingLoading) {
+      void fetchBriefing();
+    }
+  }, [tab, briefing, briefingLoading, fetchBriefing]);
 
   const degradedSources = useMemo(
     () => sources.filter((s) => s.enabled && (s.is_stale || s.last_error)).length,
@@ -315,9 +355,10 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
       <StatsStrip stats={stats} />
 
       <nav className="flex border-b border-grid bg-surface">
-        <TabButton active={tab === 'deals'}   onClick={() => setTab('deals')}   label="DEALS"   count={totalDeals} />
-        <TabButton active={tab === 'news'}    onClick={() => setTab('news')}    label="NEWS"    count={totalNews} />
-        <TabButton active={tab === 'sources'} onClick={() => setTab('sources')} label="SOURCES" count={totalSources} degraded={degradedSources} />
+        <TabButton active={tab === 'deals'}    onClick={() => setTab('deals')}    label="DEALS"    count={totalDeals} />
+        <TabButton active={tab === 'news'}     onClick={() => setTab('news')}     label="NEWS"     count={totalNews} />
+        <TabButton active={tab === 'sources'}  onClick={() => setTab('sources')}  label="SOURCES"  count={totalSources} degraded={degradedSources} />
+        <TabButton active={tab === 'briefing'} onClick={() => setTab('briefing')} label="BRIEFING" count={briefing?.window_count ?? 0} />
         {error && (
           <div data-testid="error" className="ml-auto px-4 py-2 text-[11px] text-neg">
             ERR {error}
@@ -326,9 +367,16 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
       </nav>
 
       <main className="flex-1 overflow-auto">
-        {tab === 'deals'   && <DealsTable rows={deals} onSelect={setSelectedDealId} />}
-        {tab === 'news'    && <NewsTable rows={news} />}
-        {tab === 'sources' && <SourcesTable rows={sources} />}
+        {tab === 'deals'    && <DealsTable rows={deals} onSelect={setSelectedDealId} />}
+        {tab === 'news'     && <NewsTable rows={news} />}
+        {tab === 'sources'  && <SourcesTable rows={sources} />}
+        {tab === 'briefing' && (
+          <BriefingPanel
+            briefing={briefing}
+            loading={briefingLoading}
+            onRefresh={() => { setBriefing(null); void fetchBriefing(); }}
+          />
+        )}
       </main>
 
       <footer className="border-t border-grid bg-surface px-3 py-1.5 text-[10px] text-fg-mute flex justify-between">
@@ -681,6 +729,116 @@ function SourcesTable({ rows }: { rows: SourceHealth[] }) {
   );
 }
 
+function BriefingPanel({
+  briefing, loading, onRefresh,
+}: {
+  briefing: BriefingResult | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <section data-testid="briefing-panel" className="flex flex-col h-full">
+      <header className="flex items-center justify-between border-b border-grid bg-surface px-3 py-1.5 text-[11px]">
+        <span className="text-fg-mute tracking-wider">
+          MORNING BRIEFING
+          {briefing && (
+            <>
+              {' · '}<span className="text-fg-dim">{briefing.window_count} deals (24h)</span>
+              {' · '}<span className="text-fg-dim">generated {formatRelative(briefing.generated_at)}</span>
+              {briefing.cached && <span className="text-pos ml-2">CACHED</span>}
+            </>
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="px-2 py-0.5 border border-grid text-fg-dim hover:text-amber hover:border-amber disabled:opacity-30"
+          data-testid="briefing-refresh"
+        >
+          {loading ? 'WORKING…' : 'REFRESH'}
+        </button>
+      </header>
+      <div className="flex-1 overflow-auto px-6 py-4 text-[12px] leading-relaxed max-w-[80ch]">
+        {loading && !briefing && <div className="text-fg-mute">Generating briefing…</div>}
+        {briefing?.error && (
+          <div className="text-neg">
+            ERR {briefing.error}
+            <div className="text-fg-mute mt-2">
+              The classifier may not have produced any deals yet, or ANTHROPIC_API_KEY
+              is not set on the briefing endpoint.
+            </div>
+          </div>
+        )}
+        {briefing && !briefing.error && <Markdown source={briefing.markdown} />}
+      </div>
+    </section>
+  );
+}
+
+// Constrained markdown renderer — handles only the subset our briefing prompt
+// produces: headings (#, ##), bullets (- / *), bold (**...**), italic (*...*).
+// Avoids a 30 kB markdown dependency for ~30 lines of code.
+function Markdown({ source }: { source: string }) {
+  const lines = source.split('\n');
+  const out: React.ReactNode[] = [];
+  let bullets: string[] = [];
+
+  const flushBullets = () => {
+    if (bullets.length === 0) return;
+    out.push(
+      <ul key={`ul-${out.length}`} className="list-disc ml-5 my-2 text-fg space-y-1">
+        {bullets.map((b, i) => <li key={i}>{renderInline(b)}</li>)}
+      </ul>
+    );
+    bullets = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.replace(/\s+$/, '');
+    if (line.startsWith('## ')) {
+      flushBullets();
+      out.push(<h3 key={`h3-${out.length}`} className="text-amber mt-4 mb-1.5 text-[13px] tracking-wider">{line.slice(3)}</h3>);
+    } else if (line.startsWith('# ')) {
+      flushBullets();
+      out.push(<h2 key={`h2-${out.length}`} className="text-amber mt-3 mb-1.5 text-[14px] font-bold tracking-wider">{line.slice(2)}</h2>);
+    } else if (/^\s*[-*]\s+/.test(line)) {
+      bullets.push(line.replace(/^\s*[-*]\s+/, ''));
+    } else if (line.length === 0) {
+      flushBullets();
+    } else {
+      flushBullets();
+      out.push(<p key={`p-${out.length}`} className="my-2 text-fg-dim">{renderInline(line)}</p>);
+    }
+  }
+  flushBullets();
+  return <>{out}</>;
+}
+
+// Inline: **bold** + *italic*. Anything else passes through as text.
+function renderInline(s: string): React.ReactNode {
+  const tokens: React.ReactNode[] = [];
+  // Match **bold** first (greedy is fine — markdown asterisks balance).
+  let rest = s;
+  let key = 0;
+  while (rest.length > 0) {
+    const bold = rest.match(/^\*\*([^*]+)\*\*/);
+    if (bold) { tokens.push(<strong key={key++} className="text-fg">{bold[1]}</strong>); rest = rest.slice(bold[0].length); continue; }
+    const italic = rest.match(/^\*([^*]+)\*/);
+    if (italic) { tokens.push(<em key={key++}>{italic[1]}</em>); rest = rest.slice(italic[0].length); continue; }
+    // Plain run up to the next * or end of string.
+    const next = rest.search(/\*/);
+    if (next === -1) { tokens.push(rest); break; }
+    if (next > 0) tokens.push(rest.slice(0, next));
+    rest = rest.slice(next);
+    if (rest.startsWith('*') && !rest.startsWith('**') && !/^\*[^*]+\*/.test(rest)) {
+      // Stray asterisk — emit it literally.
+      tokens.push('*'); rest = rest.slice(1);
+    }
+  }
+  return tokens;
+}
+
 function StatsStrip({ stats }: { stats: DashboardStats | null }) {
   // Bloomberg-style ticker. Falls back to em-dashes while stats load so the
   // strip occupies its space immediately and the layout doesn't jump.
@@ -847,6 +1005,7 @@ function HelpOverlay({ onClose }: { onClose: () => void }) {
     ['D',   'Switch to DEALS tab'],
     ['N',   'Switch to NEWS tab'],
     ['S',   'Switch to SOURCES tab'],
+    ['B',   'Switch to BRIEFING tab'],
     ['F',   'Focus filter bar (sector)'],
     ['C',   'Clear all filters'],
     ['R',   'Refresh now'],

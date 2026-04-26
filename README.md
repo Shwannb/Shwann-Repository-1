@@ -153,6 +153,12 @@ Invalid filters return `400` with `{ error: "<field>: <reason>" }`.
 `GET ws://host:3030/ws/deals` — open a WebSocket to receive
 `{ type: 'new_deal', deal: {...} }` frames on every `INSERT deals`.
 
+`GET /api/briefing` — returns a Claude-generated 24h markdown briefing
+(`{ markdown, generated_at, window_count, cached }`). First request in a
+30-minute window calls the model; subsequent requests serve the cached
+markdown. Empty-day fast path returns a canned no-deals message without
+hitting the API.
+
 ## Authentication
 
 Set `SAFYR_API_TOKEN` to require authentication. When unset, the terminal and
@@ -183,6 +189,8 @@ npm run test:newsapi     # upsert, dedupe, error surfacing
 npm run test:gdelt       # seendate parse, upsert, dedupe
 npm run test:ws          # real end-to-end LISTEN/NOTIFY → WebSocket → client
 npm run test:retention   # orphan deletion policy (linked items kept)
+npm run test:auth        # token gating: open mode, bearer, cookie
+npm run test:briefing    # 24h briefing: empty-day, cache TTL, regen
 npm run test:all         # all of the above in order
 ```
 
