@@ -89,7 +89,7 @@ async function testPromotion() {
   };
 
   const r1 = await drainOnce(stub);
-  console.log(`[1/5] drain (stub): processed=${r1.processed} failed=${r1.failed}`);
+  console.log(`     drain (stub): processed=${r1.processed} failed=${r1.failed}`);
   assert(r1.processed === 4 && r1.failed === 0, `expected 4/0, got ${r1.processed}/${r1.failed}`);
 
   // Three of four fixtures have promotable deal_types; one is 'unknown'.
@@ -106,7 +106,7 @@ async function testPromotion() {
   );
   assert(Number(linkRows[0].count) === 3, `expected 3 links, got ${linkRows[0].count}`);
 
-  console.log('[1/5] promotion: 3/4 fixtures promoted (unknown excluded), links correct: OK');
+  console.log('[1/10] promotion: 3/4 fixtures promoted (unknown excluded), links correct: OK');
 
   // Idempotency: manually re-classify one row (clear classified_at) and re-drain.
   // The link already exists, so no new deal row should be inserted.
@@ -119,7 +119,7 @@ async function testPromotion() {
       WHERE primary_url LIKE 'https://example.test/test-api-%'`
   );
   assert(Number(recount[0].count) === 3, `re-classify created duplicate — deals=${recount[0].count}`);
-  console.log('[2/5] re-classification is idempotent (no duplicate deals): OK');
+  console.log('[2/10] re-classification is idempotent (no duplicate deals): OK');
 }
 
 async function testFilterParser() {
@@ -139,7 +139,7 @@ async function testFilterParser() {
     assert(ok.filters.min_size === 1_000_000, 'min_size wrong');
     assert(ok.limit === 10, 'limit wrong');
   }
-  console.log('[3/5] filter parser: OK');
+  console.log('[3/10] filter parser: OK');
 }
 
 async function hitDealsEndpoint(qs: string) {
@@ -187,7 +187,7 @@ async function testDealsEndpoint() {
   assert(bad.status === 400, `bad filter should 400, got ${bad.status}`);
   assert(typeof bad.json.error === 'string', 'error message missing');
 
-  console.log(`[4/5] GET /api/deals: filters honored, validation 400s: OK (total=${all.json.total})`);
+  console.log(`[4/10] GET /api/deals: filters honored, validation 400s: OK (total=${all.json.total})`);
 }
 
 async function testNewsEndpoint() {
@@ -202,7 +202,7 @@ async function testNewsEndpoint() {
   const industrialsInDeals = await hitDealsEndpoint('sector=industrials');
   assert(industrialsInDeals.json.deals!.length === 0, 'industrials fixture leaked into deals');
 
-  console.log('[5/5] GET /api/news: sector filter matches Deals filter, unknown-type rows stay out of deals: OK');
+  console.log('[5/10] GET /api/news: sector filter matches Deals filter, unknown-type rows stay out of deals: OK');
 }
 
 async function testCsvExport() {
@@ -246,6 +246,31 @@ async function testCsvExport() {
   assert(res.headers.get('Content-Type')?.startsWith('text/csv'), 'news ct not csv');
 
   console.log('[9/10] CSV export: headers, filter honored, over-limit 400: OK');
+}
+
+async function testStatsEndpoint() {
+  const { GET } = await import('../app/api/stats/route');
+  // The promotion test left 3 deals in the table all timestamped within the
+  // last hour (announced_at = NOW() - INTERVAL '1 hour' from seedFixtures).
+  // Assert that /api/stats picks them up in the 24h window.
+  const res = await GET();
+  const json = await res.json() as {
+    deals_24h: number; deals_7d: number;
+    volume_24h_usd: number; volume_7d_usd: number;
+    top_sector_24h:    { sector: string;    count: number } | null;
+    top_geography_24h: { geography: string; count: number } | null;
+    news_24h: number; unclassified_pending: number;
+  };
+  assert(res.status === 200, `stats status ${res.status}`);
+  assert(json.deals_24h >= 3, `expected deals_24h >= 3, got ${json.deals_24h}`);
+  // The two sized fixtures total $4.225B (4.2B m_and_a + 25M vc_round; ipo is null).
+  assert(json.volume_24h_usd >= 4_225_000_000, `volume too low: ${json.volume_24h_usd}`);
+  assert(json.deals_7d >= json.deals_24h, '7d should be >= 24h');
+  assert(json.top_sector_24h !== null, 'top_sector_24h should be set');
+  assert(json.top_geography_24h !== null, 'top_geography_24h should be set');
+  assert(typeof json.news_24h === 'number' && json.news_24h >= 4, `news_24h: ${json.news_24h}`);
+  assert(typeof json.unclassified_pending === 'number', 'unclassified_pending wrong type');
+  console.log(`[6/10] GET /api/stats: deals_24h=${json.deals_24h} vol_24h=${json.volume_24h_usd} top=${json.top_sector_24h?.sector}: OK`);
 }
 
 async function testSourcesEndpoint() {
@@ -348,6 +373,7 @@ async function main() {
   await testFilterParser();
   await testDealsEndpoint();
   await testNewsEndpoint();
+  await testStatsEndpoint();
   await testSourcesEndpoint();
   await testHealthEndpoint();
   await testCsvExport();

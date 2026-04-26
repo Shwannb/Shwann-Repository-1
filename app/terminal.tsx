@@ -14,6 +14,17 @@ import { SECTORS, GEOGRAPHIES, DEAL_TYPES } from '@/lib/taxonomy';
 
 type Tab = 'deals' | 'news' | 'sources';
 
+interface DashboardStats {
+  deals_24h: number;
+  deals_7d: number;
+  volume_24h_usd: number;
+  volume_7d_usd: number;
+  top_sector_24h:    { sector: string;    count: number } | null;
+  top_geography_24h: { geography: string; count: number } | null;
+  news_24h: number;
+  unclassified_pending: number;
+}
+
 interface SourceHealth {
   id: string;
   kind: string;
@@ -115,6 +126,7 @@ export default function Terminal() {
   const [deals, setDeals] = useState<Deal[]>([]);
   const [news,  setNews]  = useState<NewsItem[]>([]);
   const [sources, setSources] = useState<SourceHealth[]>([]);
+  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [totalDeals, setTotalDeals] = useState(0);
   const [totalNews,  setTotalNews]  = useState(0);
   const [totalSources, setTotalSources] = useState(0);
@@ -149,10 +161,11 @@ export default function Terminal() {
     setError(null);
     try {
       const qs = buildQuery(filters);
-      const [dealsRes, newsRes, sourcesRes] = await Promise.all([
+      const [dealsRes, newsRes, sourcesRes, statsRes] = await Promise.all([
         fetch(`/api/deals?${qs}`,  { signal: ctrl.signal, cache: 'no-store' }),
         fetch(`/api/news?${qs}`,   { signal: ctrl.signal, cache: 'no-store' }),
         fetch(`/api/sources`,      { signal: ctrl.signal, cache: 'no-store' }),
+        fetch(`/api/stats`,        { signal: ctrl.signal, cache: 'no-store' }),
       ]);
       if (!dealsRes.ok) {
         setError(((await dealsRes.json()) as { error?: string }).error ?? `deals ${dealsRes.status}`);
@@ -167,9 +180,11 @@ export default function Terminal() {
       const sourcesJson = sourcesRes.ok
         ? (await sourcesRes.json()) as { sources: SourceHealth[]; total: number }
         : { sources: [], total: 0 };
+      const statsJson = statsRes.ok ? (await statsRes.json()) as DashboardStats : null;
       setDeals(dealsJson.deals);
       setNews(newsJson.news);
       setSources(sourcesJson.sources);
+      setStats(statsJson);
       setTotalDeals(dealsJson.total);
       setTotalNews(newsJson.total);
       setTotalSources(sourcesJson.total);
@@ -281,6 +296,8 @@ export default function Terminal() {
         firstFilterRef={firstFilterRef}
         tab={tab}
       />
+
+      <StatsStrip stats={stats} />
 
       <nav className="flex border-b border-grid bg-surface">
         <TabButton active={tab === 'deals'}   onClick={() => setTab('deals')}   label="DEALS"   count={totalDeals} />
@@ -634,6 +651,63 @@ function SourcesTable({ rows }: { rows: SourceHealth[] }) {
       </tbody>
     </table>
   );
+}
+
+function StatsStrip({ stats }: { stats: DashboardStats | null }) {
+  // Bloomberg-style ticker. Falls back to em-dashes while stats load so the
+  // strip occupies its space immediately and the layout doesn't jump.
+  return (
+    <section
+      data-testid="stats-strip"
+      className="flex flex-wrap items-center gap-x-6 gap-y-1 border-b border-grid bg-surface px-3 py-1.5 text-[10px] tracking-wider"
+    >
+      <Stat label="DEALS 24H" value={stats ? stats.deals_24h.toLocaleString() : '—'} tone="amber" />
+      <Stat label="VOL 24H"   value={stats ? formatVolume(stats.volume_24h_usd)  : '—'} tone="pos"   />
+      <Stat label="DEALS 7D"  value={stats ? stats.deals_7d.toLocaleString()     : '—'} />
+      <Stat label="VOL 7D"    value={stats ? formatVolume(stats.volume_7d_usd)   : '—'} />
+      <Stat
+        label="TOP SECTOR 24H"
+        value={stats?.top_sector_24h
+          ? `${labelize(stats.top_sector_24h.sector)} (${stats.top_sector_24h.count})`
+          : '—'}
+        tone="info"
+      />
+      <Stat
+        label="TOP GEO 24H"
+        value={stats?.top_geography_24h
+          ? `${labelize(stats.top_geography_24h.geography)} (${stats.top_geography_24h.count})`
+          : '—'}
+      />
+      <Stat label="NEWS 24H" value={stats ? stats.news_24h.toLocaleString() : '—'} />
+      <Stat
+        label="UNCLASSIFIED"
+        value={stats ? stats.unclassified_pending.toLocaleString() : '—'}
+        tone={stats && stats.unclassified_pending > 0 ? 'amber' : undefined}
+      />
+    </section>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'amber' | 'pos' | 'info' }) {
+  const cls = tone === 'amber' ? 'text-amber'
+    : tone === 'pos' ? 'text-pos'
+    : tone === 'info' ? 'text-info'
+    : 'text-fg';
+  return (
+    <span className="flex items-baseline gap-1.5">
+      <span className="text-fg-mute">{label}</span>
+      <span className={cls}>{value}</span>
+    </span>
+  );
+}
+
+function formatVolume(n: number): string {
+  if (!Number.isFinite(n) || n === 0) return '$0';
+  if (n >= 1e12) return `$${(n / 1e12).toFixed(2)}T`;
+  if (n >= 1e9)  return `$${(n / 1e9).toFixed(2)}B`;
+  if (n >= 1e6)  return `$${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3)  return `$${(n / 1e3).toFixed(0)}K`;
+  return `$${n.toFixed(0)}`;
 }
 
 function formatRelative(iso: string): string {

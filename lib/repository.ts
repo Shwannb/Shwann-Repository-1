@@ -135,6 +135,61 @@ export async function fetchDealWithSources(id: string): Promise<DealWithSources 
   return { deal: dealRows[0], sources };
 }
 
+export interface DashboardStats {
+  deals_24h: number;
+  deals_7d: number;
+  volume_24h_usd: number;
+  volume_7d_usd: number;
+  top_sector_24h:    { sector: string; count: number } | null;
+  top_geography_24h: { geography: string; count: number } | null;
+  news_24h: number;
+  unclassified_pending: number;
+}
+
+export async function queryStats(): Promise<DashboardStats> {
+  const { rows: [r] } = await db().query<{
+    deals_24h: string;
+    deals_7d: string;
+    volume_24h_usd: string | null;
+    volume_7d_usd: string | null;
+    news_24h: string;
+    unclassified_pending: string;
+  }>(
+    `SELECT
+       COUNT(*) FILTER (WHERE d.announced_at > NOW() - INTERVAL '24 hours')::text         AS deals_24h,
+       COUNT(*) FILTER (WHERE d.announced_at > NOW() - INTERVAL '7 days')::text           AS deals_7d,
+       SUM(d.deal_size_usd) FILTER (WHERE d.announced_at > NOW() - INTERVAL '24 hours')::text AS volume_24h_usd,
+       SUM(d.deal_size_usd) FILTER (WHERE d.announced_at > NOW() - INTERVAL '7 days')::text   AS volume_7d_usd,
+       (SELECT COUNT(*)::text FROM news_items WHERE ingested_at > NOW() - INTERVAL '24 hours') AS news_24h,
+       (SELECT COUNT(*)::text FROM news_items WHERE classified_at IS NULL)                AS unclassified_pending
+       FROM deals d`
+  );
+
+  const { rows: topSector } = await db().query<{ sector: string; count: string }>(
+    `SELECT sector, COUNT(*)::text AS count
+       FROM deals
+      WHERE announced_at > NOW() - INTERVAL '24 hours' AND sector IS NOT NULL
+      GROUP BY sector ORDER BY COUNT(*) DESC LIMIT 1`
+  );
+  const { rows: topGeo } = await db().query<{ geography: string; count: string }>(
+    `SELECT geography, COUNT(*)::text AS count
+       FROM deals
+      WHERE announced_at > NOW() - INTERVAL '24 hours' AND geography IS NOT NULL
+      GROUP BY geography ORDER BY COUNT(*) DESC LIMIT 1`
+  );
+
+  return {
+    deals_24h:           Number(r.deals_24h),
+    deals_7d:            Number(r.deals_7d),
+    volume_24h_usd:      Number(r.volume_24h_usd ?? 0),
+    volume_7d_usd:       Number(r.volume_7d_usd  ?? 0),
+    top_sector_24h:      topSector[0] ? { sector: topSector[0].sector, count: Number(topSector[0].count) } : null,
+    top_geography_24h:   topGeo[0]    ? { geography: topGeo[0].geography, count: Number(topGeo[0].count) } : null,
+    news_24h:            Number(r.news_24h),
+    unclassified_pending:Number(r.unclassified_pending),
+  };
+}
+
 export interface SourceHealth {
   id: string;
   kind: string;
