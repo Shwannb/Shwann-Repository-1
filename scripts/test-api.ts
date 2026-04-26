@@ -245,7 +245,60 @@ async function testCsvExport() {
   assert(res.status === 200, `news csv status ${res.status}`);
   assert(res.headers.get('Content-Type')?.startsWith('text/csv'), 'news ct not csv');
 
-  console.log('[8/9] CSV export: headers, filter honored, over-limit 400: OK');
+  console.log('[9/10] CSV export: headers, filter honored, over-limit 400: OK');
+}
+
+async function testSourcesEndpoint() {
+  const { GET } = await import('../app/api/sources/route');
+
+  // Seed deterministic state on the edgar source: a healthy poll, plus a
+  // stale source we mock by setting last_polled_at to 2h ago with an error.
+  await db().query(
+    `UPDATE sources SET last_polled_at = NOW(), last_error = NULL, last_error_at = NULL WHERE id = 'edgar'`
+  );
+  await db().query(
+    `UPDATE sources SET last_polled_at = NOW() - INTERVAL '2 hours',
+                        last_error = 'simulated outage',
+                        last_error_at = NOW() - INTERVAL '5 minutes'
+       WHERE id = 'gdelt'`
+  );
+
+  const res = await GET();
+  const json = await res.json() as {
+    sources: Array<{
+      id: string;
+      enabled: boolean;
+      last_error: string | null;
+      is_stale: boolean;
+      items_total: number;
+      items_24h: number;
+    }>;
+    total: number;
+  };
+  assert(res.status === 200, `sources status ${res.status}`);
+  assert(json.sources.length >= 5, `expected >= 5 sources, got ${json.sources.length}`);
+
+  const edgar = json.sources.find((s) => s.id === 'edgar');
+  assert(edgar, 'edgar source missing');
+  assert(edgar!.is_stale === false, 'edgar should not be stale right after a poll');
+  assert(edgar!.last_error === null, 'edgar should have no error');
+
+  const gdelt = json.sources.find((s) => s.id === 'gdelt');
+  assert(gdelt, 'gdelt source missing');
+  assert(gdelt!.is_stale === true, 'gdelt should be marked stale (2h since poll)');
+  assert(gdelt!.last_error === 'simulated outage', `gdelt error wrong: ${gdelt!.last_error}`);
+
+  // items_total / items_24h are non-negative integers for every source.
+  for (const s of json.sources) {
+    assert(Number.isInteger(s.items_total) && s.items_total >= 0, `bad items_total for ${s.id}`);
+    assert(Number.isInteger(s.items_24h)   && s.items_24h   >= 0, `bad items_24h for ${s.id}`);
+  }
+
+  // Reset gdelt so other tests start from a clean slate.
+  await db().query(
+    `UPDATE sources SET last_polled_at = NULL, last_error = NULL, last_error_at = NULL WHERE id = 'gdelt'`
+  );
+  console.log('[7/10] GET /api/sources: aggregates + stale + error fields: OK');
 }
 
 async function testHealthEndpoint() {
@@ -254,7 +307,7 @@ async function testHealthEndpoint() {
   const json = await res.json() as { status: string; db: string };
   assert(res.status === 200, `health status ${res.status}`);
   assert(json.status === 'ok' && json.db === 'up', `health body: ${JSON.stringify(json)}`);
-  console.log('[6/9] GET /api/health: 200 ok/up: OK');
+  console.log('[8/10] GET /api/health: 200 ok/up: OK');
 }
 
 async function testDealDetailEndpoint() {
@@ -287,7 +340,7 @@ async function testDealDetailEndpoint() {
   res = await GET(new Request(`http://localhost/api/deals/${bogus}`), { params: Promise.resolve({ id: bogus }) });
   assert(res.status === 404, `missing deal should 404, got ${res.status}`);
 
-  console.log('[9/9] GET /api/deals/[id]: detail + sources, 400/404 paths: OK');
+  console.log('[10/10] GET /api/deals/[id]: detail + sources, 400/404 paths: OK');
 }
 
 async function main() {
@@ -295,6 +348,7 @@ async function main() {
   await testFilterParser();
   await testDealsEndpoint();
   await testNewsEndpoint();
+  await testSourcesEndpoint();
   await testHealthEndpoint();
   await testCsvExport();
   await testDealDetailEndpoint();

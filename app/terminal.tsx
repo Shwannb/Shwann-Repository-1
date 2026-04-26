@@ -12,7 +12,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { SECTORS, GEOGRAPHIES, DEAL_TYPES } from '@/lib/taxonomy';
 
-type Tab = 'deals' | 'news';
+type Tab = 'deals' | 'news' | 'sources';
+
+interface SourceHealth {
+  id: string;
+  kind: string;
+  display_name: string;
+  enabled: boolean;
+  last_polled_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  items_total: number;
+  items_24h: number;
+  items_since_poll: number;
+  is_stale: boolean;
+}
 
 interface Filters {
   sector: string;
@@ -100,8 +114,10 @@ export default function Terminal() {
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [deals, setDeals] = useState<Deal[]>([]);
   const [news,  setNews]  = useState<NewsItem[]>([]);
+  const [sources, setSources] = useState<SourceHealth[]>([]);
   const [totalDeals, setTotalDeals] = useState(0);
   const [totalNews,  setTotalNews]  = useState(0);
+  const [totalSources, setTotalSources] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState<string | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -133,9 +149,10 @@ export default function Terminal() {
     setError(null);
     try {
       const qs = buildQuery(filters);
-      const [dealsRes, newsRes] = await Promise.all([
+      const [dealsRes, newsRes, sourcesRes] = await Promise.all([
         fetch(`/api/deals?${qs}`,  { signal: ctrl.signal, cache: 'no-store' }),
         fetch(`/api/news?${qs}`,   { signal: ctrl.signal, cache: 'no-store' }),
+        fetch(`/api/sources`,      { signal: ctrl.signal, cache: 'no-store' }),
       ]);
       if (!dealsRes.ok) {
         setError(((await dealsRes.json()) as { error?: string }).error ?? `deals ${dealsRes.status}`);
@@ -145,12 +162,17 @@ export default function Terminal() {
         setError(((await newsRes.json()) as { error?: string }).error ?? `news ${newsRes.status}`);
         return;
       }
-      const dealsJson = (await dealsRes.json()) as { deals: Deal[]; total: number };
-      const newsJson  = (await newsRes.json())  as { news: NewsItem[]; total: number };
+      const dealsJson   = (await dealsRes.json())   as { deals: Deal[]; total: number };
+      const newsJson    = (await newsRes.json())    as { news: NewsItem[]; total: number };
+      const sourcesJson = sourcesRes.ok
+        ? (await sourcesRes.json()) as { sources: SourceHealth[]; total: number }
+        : { sources: [], total: 0 };
       setDeals(dealsJson.deals);
       setNews(newsJson.news);
+      setSources(sourcesJson.sources);
       setTotalDeals(dealsJson.total);
       setTotalNews(newsJson.total);
+      setTotalSources(sourcesJson.total);
       setLastRefresh(new Date());
     } catch (err) {
       if ((err as { name?: string }).name === 'AbortError') return;
@@ -226,6 +248,7 @@ export default function Terminal() {
       switch (e.key) {
         case 'd': setTab('deals'); break;
         case 'n': setTab('news'); break;
+        case 's': setTab('sources'); break;
         case 'f': firstFilterRef.current?.focus(); e.preventDefault(); break;
         case 'c': setFilters(EMPTY_FILTERS); break;
         case 'r': void fetchAll(); break;
@@ -239,6 +262,11 @@ export default function Terminal() {
   const activeFilterCount = useMemo(
     () => Object.values(filters).filter((v) => v !== '').length,
     [filters]
+  );
+
+  const degradedSources = useMemo(
+    () => sources.filter((s) => s.enabled && (s.is_stale || s.last_error)).length,
+    [sources]
   );
 
   return (
@@ -255,8 +283,9 @@ export default function Terminal() {
       />
 
       <nav className="flex border-b border-grid bg-surface">
-        <TabButton active={tab === 'deals'} onClick={() => setTab('deals')} label="DEALS" count={totalDeals} />
-        <TabButton active={tab === 'news'}  onClick={() => setTab('news')}  label="NEWS"  count={totalNews} />
+        <TabButton active={tab === 'deals'}   onClick={() => setTab('deals')}   label="DEALS"   count={totalDeals} />
+        <TabButton active={tab === 'news'}    onClick={() => setTab('news')}    label="NEWS"    count={totalNews} />
+        <TabButton active={tab === 'sources'} onClick={() => setTab('sources')} label="SOURCES" count={totalSources} degraded={degradedSources} />
         {error && (
           <div data-testid="error" className="ml-auto px-4 py-2 text-[11px] text-neg">
             ERR {error}
@@ -265,9 +294,9 @@ export default function Terminal() {
       </nav>
 
       <main className="flex-1 overflow-auto">
-        {tab === 'deals'
-          ? <DealsTable rows={deals} onSelect={setSelectedDealId} />
-          : <NewsTable rows={news} />}
+        {tab === 'deals'   && <DealsTable rows={deals} onSelect={setSelectedDealId} />}
+        {tab === 'news'    && <NewsTable rows={news} />}
+        {tab === 'sources' && <SourcesTable rows={sources} />}
       </main>
 
       <footer className="border-t border-grid bg-surface px-3 py-1.5 text-[10px] text-fg-mute flex justify-between">
@@ -328,7 +357,15 @@ function Header({ lastRefresh, loading, liveTick }: { lastRefresh: Date; loading
   );
 }
 
-function TabButton({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+function TabButton({
+  active, onClick, label, count, degraded,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+  degraded?: number;
+}) {
   return (
     <button
       type="button"
@@ -339,6 +376,11 @@ function TabButton({ active, onClick, label, count }: { active: boolean; onClick
       ].join(' ')}
     >
       {label} <span className="text-fg-mute ml-1">[{count}]</span>
+      {degraded !== undefined && degraded > 0 && (
+        <span className="ml-2 text-neg" title={`${degraded} source(s) stale or errored`}>
+          ● {degraded}
+        </span>
+      )}
     </button>
   );
 }
@@ -545,11 +587,68 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
+function SourcesTable({ rows }: { rows: SourceHealth[] }) {
+  if (rows.length === 0) return <EmptyState message="No sources registered." />;
+  return (
+    <table data-testid="sources-table" className="w-full text-[11px]">
+      <thead className="sticky top-0 bg-surface border-b border-grid-strong">
+        <tr className="text-fg-mute">
+          <Th className="w-[3ch]">●</Th>
+          <Th className="w-[18ch]">SOURCE</Th>
+          <Th>NAME</Th>
+          <Th className="w-[14ch]">KIND</Th>
+          <Th className="w-[14ch]">LAST POLL</Th>
+          <Th className="w-[10ch] text-right">24H</Th>
+          <Th className="w-[10ch] text-right">TOTAL</Th>
+          <Th>LAST ERROR</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((s) => {
+          const status = !s.enabled ? 'OFF'
+            : s.last_error    ? 'ERR'
+            : s.is_stale      ? 'STALE'
+            : 'OK';
+          const statusColor =
+            status === 'OFF'   ? 'text-fg-mute' :
+            status === 'OK'    ? 'text-pos'     :
+            status === 'STALE' ? 'text-amber'   :
+                                 'text-neg';
+          return (
+            <tr key={s.id} className="border-b border-grid hover:bg-surface-2">
+              <Td className={statusColor} title={status}>●</Td>
+              <Td className="text-fg">{s.id}</Td>
+              <Td className="text-fg-dim">{s.display_name}</Td>
+              <Td className="text-info">{s.kind.toUpperCase()}</Td>
+              <Td className="text-fg-dim">
+                {s.last_polled_at ? formatRelative(s.last_polled_at) : '—'}
+              </Td>
+              <Td className="text-right text-pos">{s.items_24h.toLocaleString()}</Td>
+              <Td className="text-right text-fg-dim">{s.items_total.toLocaleString()}</Td>
+              <Td className="text-neg truncate max-w-[40ch]" title={s.last_error ?? undefined}>
+                {s.last_error ?? ''}
+              </Td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+function formatRelative(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 60_000)        return `${Math.floor(ms / 1000)}s ago`;
+  if (ms < 3_600_000)     return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000)    return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
+}
+
 function Th({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <th className={`px-3 py-1.5 text-left font-normal tracking-wider ${className}`}>{children}</th>;
 }
-function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <td className={`px-3 py-1.5 align-top ${className}`}>{children}</td>;
+function Td({ children, className = '', title }: { children: React.ReactNode; className?: string; title?: string }) {
+  return <td className={`px-3 py-1.5 align-top ${className}`} title={title}>{children}</td>;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -645,6 +744,7 @@ function HelpOverlay({ onClose }: { onClose: () => void }) {
   const rows: Array<[string, string]> = [
     ['D',   'Switch to DEALS tab'],
     ['N',   'Switch to NEWS tab'],
+    ['S',   'Switch to SOURCES tab'],
     ['F',   'Focus filter bar (sector)'],
     ['C',   'Clear all filters'],
     ['R',   'Refresh now'],

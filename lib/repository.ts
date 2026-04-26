@@ -135,6 +135,76 @@ export async function fetchDealWithSources(id: string): Promise<DealWithSources 
   return { deal: dealRows[0], sources };
 }
 
+export interface SourceHealth {
+  id: string;
+  kind: string;
+  display_name: string;
+  enabled: boolean;
+  last_polled_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  items_total: number;
+  items_24h: number;
+  items_since_poll: number;
+  is_stale: boolean;
+}
+
+// Stale = enabled, hasn't been polled in the last 30 minutes (3× the standard
+// 10-minute cadence). Disabled sources are never marked stale because operators
+// turn them off deliberately.
+const STALE_AFTER_MS = 30 * 60 * 1000;
+
+export async function querySources(): Promise<SourceHealth[]> {
+  const { rows } = await db().query<{
+    id: string;
+    kind: string;
+    display_name: string;
+    enabled: boolean;
+    last_polled_at: string | null;
+    last_error: string | null;
+    last_error_at: string | null;
+    items_total: string;
+    items_24h: string;
+    items_since_poll: string;
+  }>(
+    `SELECT s.id, s.kind, s.display_name, s.enabled,
+            s.last_polled_at, s.last_error, s.last_error_at,
+            COALESCE(c.items_total, 0)::text     AS items_total,
+            COALESCE(c.items_24h,   0)::text     AS items_24h,
+            COALESCE(c.items_since_poll, 0)::text AS items_since_poll
+       FROM sources s
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*) FILTER (WHERE TRUE)                                              AS items_total,
+                COUNT(*) FILTER (WHERE n.ingested_at > NOW() - INTERVAL '24 hours')        AS items_24h,
+                COUNT(*) FILTER (WHERE s.last_polled_at IS NOT NULL
+                                   AND n.ingested_at > s.last_polled_at - INTERVAL '15 min') AS items_since_poll
+           FROM news_items n
+          WHERE n.source_id = s.id
+       ) c ON TRUE
+      ORDER BY s.kind, s.id`
+  );
+
+  const now = Date.now();
+  return rows.map((r) => {
+    const lastPolledMs = r.last_polled_at ? new Date(r.last_polled_at).getTime() : 0;
+    const isStale =
+      r.enabled && (lastPolledMs === 0 || now - lastPolledMs > STALE_AFTER_MS);
+    return {
+      id: r.id,
+      kind: r.kind,
+      display_name: r.display_name,
+      enabled: r.enabled,
+      last_polled_at: r.last_polled_at,
+      last_error: r.last_error,
+      last_error_at: r.last_error_at,
+      items_total: Number(r.items_total),
+      items_24h: Number(r.items_24h),
+      items_since_poll: Number(r.items_since_poll),
+      is_stale: isStale,
+    };
+  });
+}
+
 export async function queryNews(
   filters: Filters,
   limit: number,

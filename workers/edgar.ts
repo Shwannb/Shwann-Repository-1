@@ -110,10 +110,26 @@ export async function pollOnce(fetcher: AtomFetcher = fetchEdgarAtom): Promise<P
     else skipped++;
   }
   await pool.query(
-    'UPDATE sources SET last_polled_at = NOW() WHERE id = $1',
+    `UPDATE sources
+        SET last_polled_at = NOW(),
+            last_error     = NULL,
+            last_error_at  = NULL
+      WHERE id = $1`,
     [SOURCE_ID]
   );
   return { fetched: filings.length, inserted, skipped };
+}
+
+// Record an error so the SOURCES tab shows EDGAR as degraded.
+export async function recordEdgarError(message: string): Promise<void> {
+  await db().query(
+    `UPDATE sources
+        SET last_polled_at = NOW(),
+            last_error     = $2,
+            last_error_at  = NOW()
+      WHERE id = $1`,
+    [SOURCE_ID, message.slice(0, 500)]
+  );
 }
 
 async function runLoop() {
@@ -128,6 +144,8 @@ async function runLoop() {
       );
     } catch (err) {
       console.error('[edgar] poll failed:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      await recordEdgarError(message).catch(() => void 0);
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }

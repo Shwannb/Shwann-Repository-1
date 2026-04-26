@@ -98,8 +98,26 @@ export async function pollOnce(fetcher: GdeltFetcher = fetchGdelt): Promise<Poll
     if (result.rowCount && result.rowCount > 0) inserted++;
     else skipped++;
   }
-  await db().query(`UPDATE sources SET last_polled_at = NOW() WHERE id = $1`, [SOURCE_ID]);
+  await db().query(
+    `UPDATE sources
+        SET last_polled_at = NOW(),
+            last_error     = NULL,
+            last_error_at  = NULL
+      WHERE id = $1`,
+    [SOURCE_ID]
+  );
   return { fetched: articles.length, inserted, skipped };
+}
+
+export async function recordGdeltError(message: string): Promise<void> {
+  await db().query(
+    `UPDATE sources
+        SET last_polled_at = NOW(),
+            last_error     = $2,
+            last_error_at  = NOW()
+      WHERE id = $1`,
+    [SOURCE_ID, message.slice(0, 500)]
+  );
 }
 
 async function runLoop() {
@@ -110,6 +128,8 @@ async function runLoop() {
       console.log(`[gdelt] poll fetched=${r.fetched} inserted=${r.inserted} skipped=${r.skipped}`);
     } catch (err) {
       console.error('[gdelt] poll failed:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      await recordGdeltError(message).catch(() => void 0);
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }

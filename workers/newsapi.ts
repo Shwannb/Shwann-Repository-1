@@ -104,8 +104,26 @@ export async function pollOnce(
     if (result.rowCount && result.rowCount > 0) inserted++;
     else skipped++;
   }
-  await db().query(`UPDATE sources SET last_polled_at = NOW() WHERE id = $1`, [SOURCE_ID]);
+  await db().query(
+    `UPDATE sources
+        SET last_polled_at = NOW(),
+            last_error     = NULL,
+            last_error_at  = NULL
+      WHERE id = $1`,
+    [SOURCE_ID]
+  );
   return { fetched: articles.length, inserted, skipped };
+}
+
+export async function recordNewsApiError(message: string): Promise<void> {
+  await db().query(
+    `UPDATE sources
+        SET last_polled_at = NOW(),
+            last_error     = $2,
+            last_error_at  = NOW()
+      WHERE id = $1`,
+    [SOURCE_ID, message.slice(0, 500)]
+  );
 }
 
 async function runLoop() {
@@ -116,6 +134,8 @@ async function runLoop() {
       console.log(`[newsapi] poll fetched=${r.fetched} inserted=${r.inserted} skipped=${r.skipped}`);
     } catch (err) {
       console.error('[newsapi] poll failed:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      await recordNewsApiError(message).catch(() => void 0);
     }
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
   }

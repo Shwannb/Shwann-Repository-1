@@ -91,18 +91,31 @@ export async function pollSource(source: RssSource, fetcher: FeedFetcher): Promi
     const { inserted, skipped } = await upsertItems(source.id, items);
     const newestId = items[0]?.externalId ?? null;
     await db().query(
-      `UPDATE sources SET last_polled_at = NOW(), last_cursor = $2 WHERE id = $1`,
+      `UPDATE sources
+          SET last_polled_at = NOW(),
+              last_cursor    = $2,
+              last_error     = NULL,
+              last_error_at  = NULL
+        WHERE id = $1`,
       [source.id, newestId]
     );
     return { source_id: source.id, fetched: items.length, inserted, skipped };
   } catch (error) {
-    await db().query(`UPDATE sources SET last_polled_at = NOW() WHERE id = $1`, [source.id]);
+    const message = error instanceof Error ? error.message : String(error);
+    await db().query(
+      `UPDATE sources
+          SET last_polled_at = NOW(),
+              last_error     = $2,
+              last_error_at  = NOW()
+        WHERE id = $1`,
+      [source.id, message.slice(0, 500)]
+    );
     return {
       source_id: source.id,
       fetched: 0,
       inserted: 0,
       skipped: 0,
-      error: error instanceof Error ? error.message : String(error),
+      error: message,
     };
   }
 }
