@@ -48,6 +48,7 @@ function buildWhere(
     deal_type: string;
     deal_size: string;
     date: string;
+    text: string; // headline (deals) or title (news_items)
   }
 ): WhereBuild {
   const clauses: string[] = [];
@@ -63,7 +64,29 @@ function buildWhere(
   if (filters.max_size !== undefined) add(`${cols.deal_size} <= $?`, filters.max_size);
   if (filters.from)      add(`${cols.date} >= $?`, filters.from.toISOString());
   if (filters.to)        add(`${cols.date} <= $?`, filters.to.toISOString());
+  if (filters.q) {
+    // ILIKE %q% — escape any user-supplied % and _ so they're literal.
+    const escaped = filters.q.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+    add(`${cols.text} ILIKE '%' || $? || '%'`, escaped);
+  }
   return { clauses, params };
+}
+
+// Map the public sort key to the table-specific column. Whitelisted in
+// FilterSchema so no user input ever lands in the SQL string.
+function sortColumn(
+  key: 'date' | 'sector' | 'geography' | 'deal_type' | 'deal_size_usd' | undefined,
+  cols: { date: string; sector: string; geography: string; deal_type: string; deal_size: string }
+): string {
+  switch (key) {
+    case 'sector':        return cols.sector;
+    case 'geography':     return cols.geography;
+    case 'deal_type':     return cols.deal_type;
+    case 'deal_size_usd': return cols.deal_size;
+    case 'date':
+    case undefined:
+    default:              return cols.date;
+  }
 }
 
 export async function queryDeals(
@@ -71,14 +94,22 @@ export async function queryDeals(
   limit: number,
   offset: number
 ): Promise<{ rows: Deal[]; total: number }> {
-  const { clauses, params } = buildWhere(filters, {
+  const cols = {
     sector: 'sector',
     geography: 'geography',
     deal_type: 'deal_type',
     deal_size: 'deal_size_usd',
     date: 'announced_at',
-  });
+    text: 'headline',
+  };
+  const { clauses, params } = buildWhere(filters, cols);
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+  const sortCol = sortColumn(filters.sort, cols);
+  const direction = filters.order === 'asc' ? 'ASC' : 'DESC';
+  // NULLS LAST keeps undisclosed-size rows out of the top of the list when
+  // the user sorts by deal_size_usd.
+  const orderBy = `ORDER BY ${sortCol} ${direction} NULLS LAST, id DESC`;
 
   const { rows: total } = await db().query<{ count: string }>(
     `SELECT COUNT(*)::text AS count FROM deals ${where}`,
@@ -90,7 +121,7 @@ export async function queryDeals(
             announced_at, status, primary_source_id, primary_url
        FROM deals
        ${where}
-       ORDER BY announced_at DESC, id DESC
+       ${orderBy}
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset]
   );
@@ -265,14 +296,20 @@ export async function queryNews(
   limit: number,
   offset: number
 ): Promise<{ rows: NewsItem[]; total: number }> {
-  const { clauses, params } = buildWhere(filters, {
+  const cols = {
     sector: 'sector',
     geography: 'geography',
     deal_type: 'deal_type',
     deal_size: 'deal_size_usd',
     date: 'published_at',
-  });
+    text: 'title',
+  };
+  const { clauses, params } = buildWhere(filters, cols);
   const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+  const sortCol = sortColumn(filters.sort, cols);
+  const direction = filters.order === 'asc' ? 'ASC' : 'DESC';
+  const orderBy = `ORDER BY ${sortCol} ${direction} NULLS LAST, id DESC`;
 
   const { rows: total } = await db().query<{ count: string }>(
     `SELECT COUNT(*)::text AS count FROM news_items ${where}`,
@@ -285,7 +322,7 @@ export async function queryNews(
             classified_at
        FROM news_items
        ${where}
-       ORDER BY published_at DESC, id DESC
+       ${orderBy}
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset]
   );

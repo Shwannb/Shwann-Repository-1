@@ -27,6 +27,13 @@ const isoDate = z
 export const JSON_LIMIT_MAX = 200;
 export const CSV_LIMIT_MAX  = 5000;
 
+// Sort columns that the repository knows how to ORDER BY for both deals and
+// news. The repository maps these to its own column for each table — see
+// `sortColumn()` in lib/repository.ts. This whitelist is the only thing that
+// goes into the SQL string; user input is otherwise fully parameterized.
+export const SORT_KEYS = ['date', 'sector', 'geography', 'deal_type', 'deal_size_usd'] as const;
+export type SortKey = typeof SORT_KEYS[number];
+
 export const FilterSchema = z.object({
   sector:     z.enum(SECTORS).optional(),
   geography:  z.enum(GEOGRAPHIES).optional(),
@@ -35,6 +42,11 @@ export const FilterSchema = z.object({
   max_size:   numericString.optional(),
   from:       isoDate.optional(),
   to:         isoDate.optional(),
+  // Free-text search — substring match over the headline / news title. We
+  // bound length so an attacker can't drive a 10MB ILIKE.
+  q:          z.string().min(1).max(200).optional(),
+  sort:       z.enum(SORT_KEYS).optional(),
+  order:      z.enum(['asc', 'desc']).optional(),
   limit:      positiveInt.pipe(z.number().max(CSV_LIMIT_MAX)).optional(),
   offset:     positiveInt.optional(),
   format:     z.enum(['json', 'csv']).optional(),
@@ -56,7 +68,7 @@ export interface FilterError {
 
 export function parseFilters(params: URLSearchParams): FilterResult | FilterError {
   const raw: Record<string, string> = {};
-  for (const key of ['sector', 'geography', 'deal_type', 'min_size', 'max_size', 'from', 'to', 'limit', 'offset', 'format']) {
+  for (const key of ['sector', 'geography', 'deal_type', 'min_size', 'max_size', 'from', 'to', 'q', 'sort', 'order', 'limit', 'offset', 'format']) {
     const v = params.get(key);
     if (v !== null && v !== '') raw[key] = v;
   }

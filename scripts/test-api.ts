@@ -106,7 +106,7 @@ async function testPromotion() {
   );
   assert(Number(linkRows[0].count) === 3, `expected 3 links, got ${linkRows[0].count}`);
 
-  console.log('[1/10] promotion: 3/4 fixtures promoted (unknown excluded), links correct: OK');
+  console.log('[1/11] promotion: 3/4 fixtures promoted (unknown excluded), links correct: OK');
 
   // Idempotency: manually re-classify one row (clear classified_at) and re-drain.
   // The link already exists, so no new deal row should be inserted.
@@ -119,7 +119,7 @@ async function testPromotion() {
       WHERE primary_url LIKE 'https://example.test/test-api-%'`
   );
   assert(Number(recount[0].count) === 3, `re-classify created duplicate — deals=${recount[0].count}`);
-  console.log('[2/10] re-classification is idempotent (no duplicate deals): OK');
+  console.log('[2/11] re-classification is idempotent (no duplicate deals): OK');
 }
 
 async function testFilterParser() {
@@ -139,7 +139,7 @@ async function testFilterParser() {
     assert(ok.filters.min_size === 1_000_000, 'min_size wrong');
     assert(ok.limit === 10, 'limit wrong');
   }
-  console.log('[3/10] filter parser: OK');
+  console.log('[3/11] filter parser: OK');
 }
 
 async function hitDealsEndpoint(qs: string) {
@@ -187,7 +187,7 @@ async function testDealsEndpoint() {
   assert(bad.status === 400, `bad filter should 400, got ${bad.status}`);
   assert(typeof bad.json.error === 'string', 'error message missing');
 
-  console.log(`[4/10] GET /api/deals: filters honored, validation 400s: OK (total=${all.json.total})`);
+  console.log(`[4/11] GET /api/deals: filters honored, validation 400s: OK (total=${all.json.total})`);
 }
 
 async function testNewsEndpoint() {
@@ -202,7 +202,7 @@ async function testNewsEndpoint() {
   const industrialsInDeals = await hitDealsEndpoint('sector=industrials');
   assert(industrialsInDeals.json.deals!.length === 0, 'industrials fixture leaked into deals');
 
-  console.log('[5/10] GET /api/news: sector filter matches Deals filter, unknown-type rows stay out of deals: OK');
+  console.log('[5/11] GET /api/news: sector filter matches Deals filter, unknown-type rows stay out of deals: OK');
 }
 
 async function testCsvExport() {
@@ -245,7 +245,47 @@ async function testCsvExport() {
   assert(res.status === 200, `news csv status ${res.status}`);
   assert(res.headers.get('Content-Type')?.startsWith('text/csv'), 'news ct not csv');
 
-  console.log('[9/10] CSV export: headers, filter honored, over-limit 400: OK');
+  console.log('[10/11] CSV export: headers, filter honored, over-limit 400: OK');
+}
+
+async function testSearchAndSort() {
+  // q= matches the headline ILIKE; our seeded fixtures have distinct headlines.
+  const cloud = await hitDealsEndpoint('q=CloudSoft');
+  assert(cloud.json.deals!.length === 1, `q=CloudSoft expected 1, got ${cloud.json.deals!.length}`);
+  assert(cloud.json.deals![0].headline.includes('CloudSoft'), 'q result missed CloudSoft');
+
+  const lagos = await hitDealsEndpoint('q=Lagos');
+  assert(lagos.json.deals!.length === 1, `q=Lagos expected 1, got ${lagos.json.deals!.length}`);
+
+  // ILIKE wildcards in user input must be literal (escaped). '%' alone should
+  // match zero rows because none of our headlines contain a literal %.
+  const literalPercent = await hitDealsEndpoint('q=%25');
+  assert(literalPercent.json.deals!.length === 0, '% should be treated as literal, not wildcard');
+
+  // Sort by deal_size_usd descending — biggest deal first.
+  const bySize = await hitDealsEndpoint('sort=deal_size_usd&order=desc');
+  assert(bySize.json.deals!.length >= 3, 'expected >= 3 sorted deals');
+  // Largest deal in fixtures is the 4.2B m_and_a.
+  const sizes = bySize.json.deals!.map((d) => d.deal_size_usd ?? -1);
+  for (let i = 1; i < sizes.length; i++) {
+    assert(sizes[i - 1] >= sizes[i], `sort desc broken: ${sizes[i - 1]} < ${sizes[i]}`);
+  }
+
+  // Sort by deal_size_usd ascending — undisclosed (null) sorts last via NULLS LAST.
+  const bySizeAsc = await hitDealsEndpoint('sort=deal_size_usd&order=asc');
+  const ascSizes = bySizeAsc.json.deals!.map((d) => d.deal_size_usd);
+  // Last entry must be null (the IPO with undisclosed size).
+  assert(ascSizes[ascSizes.length - 1] === null, 'NULLS LAST violated');
+
+  // Bad sort key → 400.
+  const badSort = await hitDealsEndpoint('sort=bogus');
+  assert(badSort.status === 400, `bad sort should 400, got ${badSort.status}`);
+
+  // Search applies to /api/news too (matches the title column).
+  const newsSearch = await hitNewsEndpoint('q=Lagos');
+  assert(newsSearch.json.news!.length === 1, `news q=Lagos expected 1, got ${newsSearch.json.news!.length}`);
+
+  console.log('[6/11] search (q=) + sort (size desc/asc, NULLS LAST) + bad sort 400: OK');
 }
 
 async function testStatsEndpoint() {
@@ -270,7 +310,7 @@ async function testStatsEndpoint() {
   assert(json.top_geography_24h !== null, 'top_geography_24h should be set');
   assert(typeof json.news_24h === 'number' && json.news_24h >= 4, `news_24h: ${json.news_24h}`);
   assert(typeof json.unclassified_pending === 'number', 'unclassified_pending wrong type');
-  console.log(`[6/10] GET /api/stats: deals_24h=${json.deals_24h} vol_24h=${json.volume_24h_usd} top=${json.top_sector_24h?.sector}: OK`);
+  console.log(`[7/11] GET /api/stats: deals_24h=${json.deals_24h} vol_24h=${json.volume_24h_usd} top=${json.top_sector_24h?.sector}: OK`);
 }
 
 async function testSourcesEndpoint() {
@@ -323,7 +363,7 @@ async function testSourcesEndpoint() {
   await db().query(
     `UPDATE sources SET last_polled_at = NULL, last_error = NULL, last_error_at = NULL WHERE id = 'gdelt'`
   );
-  console.log('[7/10] GET /api/sources: aggregates + stale + error fields: OK');
+  console.log('[8/11] GET /api/sources: aggregates + stale + error fields: OK');
 }
 
 async function testHealthEndpoint() {
@@ -332,7 +372,7 @@ async function testHealthEndpoint() {
   const json = await res.json() as { status: string; db: string };
   assert(res.status === 200, `health status ${res.status}`);
   assert(json.status === 'ok' && json.db === 'up', `health body: ${JSON.stringify(json)}`);
-  console.log('[8/10] GET /api/health: 200 ok/up: OK');
+  console.log('[9/11] GET /api/health: 200 ok/up: OK');
 }
 
 async function testDealDetailEndpoint() {
@@ -365,7 +405,7 @@ async function testDealDetailEndpoint() {
   res = await GET(new Request(`http://localhost/api/deals/${bogus}`), { params: Promise.resolve({ id: bogus }) });
   assert(res.status === 404, `missing deal should 404, got ${res.status}`);
 
-  console.log('[10/10] GET /api/deals/[id]: detail + sources, 400/404 paths: OK');
+  console.log('[11/11] GET /api/deals/[id]: detail + sources, 400/404 paths: OK');
 }
 
 async function main() {
@@ -373,6 +413,7 @@ async function main() {
   await testFilterParser();
   await testDealsEndpoint();
   await testNewsEndpoint();
+  await testSearchAndSort();
   await testStatsEndpoint();
   await testSourcesEndpoint();
   await testHealthEndpoint();

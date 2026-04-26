@@ -55,11 +55,15 @@ interface Filters {
   max_size: string;
   from: string;
   to: string;
+  q: string;
+  sort: '' | 'date' | 'sector' | 'geography' | 'deal_type' | 'deal_size_usd';
+  order: '' | 'asc' | 'desc';
 }
 
 const EMPTY_FILTERS: Filters = {
   sector: '', geography: '', deal_type: '',
   min_size: '', max_size: '', from: '', to: '',
+  q: '', sort: '', order: '',
 };
 
 interface Deal {
@@ -103,7 +107,7 @@ interface DealWithSources {
 
 function buildQuery(f: Filters, limit = 100): string {
   const p = new URLSearchParams();
-  for (const [k, v] of Object.entries(f)) if (v) p.set(k, v);
+  for (const [k, v] of Object.entries(f)) if (v) p.set(k, String(v));
   p.set('limit', String(limit));
   return p.toString();
 }
@@ -367,8 +371,23 @@ export default function Terminal({ authEnabled = false }: { authEnabled?: boolea
       </nav>
 
       <main className="flex-1 overflow-auto">
-        {tab === 'deals'    && <DealsTable rows={deals} onSelect={setSelectedDealId} />}
-        {tab === 'news'     && <NewsTable rows={news} />}
+        {tab === 'deals'    && (
+          <DealsTable
+            rows={deals}
+            onSelect={setSelectedDealId}
+            sort={filters.sort}
+            order={filters.order}
+            onSort={(key) => setFilters((f) => toggleSort(f, key))}
+          />
+        )}
+        {tab === 'news'     && (
+          <NewsTable
+            rows={news}
+            sort={filters.sort}
+            order={filters.order}
+            onSort={(key) => setFilters((f) => toggleSort(f, key))}
+          />
+        )}
         {tab === 'sources'  && <SourcesTable rows={sources} />}
         {tab === 'briefing' && (
           <BriefingPanel
@@ -514,6 +533,7 @@ function FilterBar({
       <FilterInput label="SIZE MAX $" value={filters.max_size} onChange={(v) => set('max_size', v)} placeholder="∞"       width={20} />
       <FilterInput label="FROM"       value={filters.from}     onChange={(v) => set('from', v)}     placeholder="YYYY-MM-DD" type="date" />
       <FilterInput label="TO"         value={filters.to}       onChange={(v) => set('to', v)}       placeholder="YYYY-MM-DD" type="date" />
+      <FilterInput label="SEARCH"     value={filters.q}        onChange={(v) => set('q', v)}        placeholder="headline keyword" width={28} />
 
       <div className="ml-auto flex items-center gap-2">
         <a
@@ -590,18 +610,26 @@ function FilterInput({
 
 // ────────────────────────────────────────────────────────────────────────────
 
-function DealsTable({ rows, onSelect }: { rows: Deal[]; onSelect: (id: string) => void }) {
+function DealsTable({
+  rows, onSelect, sort, order, onSort,
+}: {
+  rows: Deal[];
+  onSelect: (id: string) => void;
+  sort: Filters['sort'];
+  order: Filters['order'];
+  onSort: (key: NonNullable<Filters['sort']>) => void;
+}) {
   if (rows.length === 0) return <EmptyState message="No deals match the current filters." />;
   return (
     <table data-testid="deals-table" className="w-full text-[11px]">
       <thead className="sticky top-0 bg-surface border-b border-grid-strong">
         <tr className="text-fg-mute">
-          <Th className="w-[12ch]">DATE</Th>
+          <SortableTh className="w-[12ch]" col="date"          sort={sort} order={order} onSort={onSort}>DATE</SortableTh>
           <Th>HEADLINE</Th>
-          <Th className="w-[14ch]">SECTOR</Th>
-          <Th className="w-[18ch]">GEO</Th>
-          <Th className="w-[14ch]">TYPE</Th>
-          <Th className="w-[10ch] text-right">SIZE</Th>
+          <SortableTh className="w-[14ch]" col="sector"        sort={sort} order={order} onSort={onSort}>SECTOR</SortableTh>
+          <SortableTh className="w-[18ch]" col="geography"     sort={sort} order={order} onSort={onSort}>GEO</SortableTh>
+          <SortableTh className="w-[14ch]" col="deal_type"     sort={sort} order={order} onSort={onSort}>TYPE</SortableTh>
+          <SortableTh className="w-[10ch] text-right" col="deal_size_usd" sort={sort} order={order} onSort={onSort}>SIZE</SortableTh>
           <Th className="w-[12ch]">SOURCE</Th>
         </tr>
       </thead>
@@ -638,17 +666,24 @@ function DealsTable({ rows, onSelect }: { rows: Deal[]; onSelect: (id: string) =
   );
 }
 
-function NewsTable({ rows }: { rows: NewsItem[] }) {
+function NewsTable({
+  rows, sort, order, onSort,
+}: {
+  rows: NewsItem[];
+  sort: Filters['sort'];
+  order: Filters['order'];
+  onSort: (key: NonNullable<Filters['sort']>) => void;
+}) {
   if (rows.length === 0) return <EmptyState message="No news items match the current filters." />;
   return (
     <table data-testid="news-table" className="w-full text-[11px]">
       <thead className="sticky top-0 bg-surface border-b border-grid-strong">
         <tr className="text-fg-mute">
-          <Th className="w-[12ch]">DATE</Th>
+          <SortableTh className="w-[12ch]" col="date"      sort={sort} order={order} onSort={onSort}>DATE</SortableTh>
           <Th>TITLE</Th>
-          <Th className="w-[14ch]">SECTOR</Th>
-          <Th className="w-[18ch]">GEO</Th>
-          <Th className="w-[14ch]">TYPE</Th>
+          <SortableTh className="w-[14ch]" col="sector"    sort={sort} order={order} onSort={onSort}>SECTOR</SortableTh>
+          <SortableTh className="w-[18ch]" col="geography" sort={sort} order={order} onSort={onSort}>GEO</SortableTh>
+          <SortableTh className="w-[14ch]" col="deal_type" sort={sort} order={order} onSort={onSort}>TYPE</SortableTh>
           <Th className="w-[12ch]">SOURCE</Th>
         </tr>
       </thead>
@@ -909,6 +944,45 @@ function Th({ children, className = '' }: { children: React.ReactNode; className
 }
 function Td({ children, className = '', title }: { children: React.ReactNode; className?: string; title?: string }) {
   return <td className={`px-3 py-1.5 align-top ${className}`} title={title}>{children}</td>;
+}
+
+type SortKey = NonNullable<Filters['sort']>;
+
+// Toggle: same column → flip direction; different column → set DESC.
+// Click-then-click again on the active asc column clears the sort.
+function toggleSort(f: Filters, key: SortKey): Filters {
+  if (f.sort === key) {
+    if (f.order === 'desc') return { ...f, order: 'asc' };
+    if (f.order === 'asc')  return { ...f, sort: '', order: '' };
+    return { ...f, order: 'desc' };
+  }
+  return { ...f, sort: key, order: 'desc' };
+}
+
+function SortableTh({
+  children, className = '', col, sort, order, onSort,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  col: SortKey;
+  sort: Filters['sort'];
+  order: Filters['order'];
+  onSort: (col: SortKey) => void;
+}) {
+  const active = sort === col;
+  const arrow = !active ? '' : order === 'desc' ? ' ↓' : order === 'asc' ? ' ↑' : '';
+  return (
+    <th className={`px-3 py-1.5 text-left font-normal tracking-wider ${className}`}>
+      <button
+        type="button"
+        onClick={() => onSort(col)}
+        className={`text-left ${active ? 'text-amber' : 'text-fg-mute hover:text-fg'}`}
+        data-testid={`sort-${col}`}
+      >
+        {children}{arrow}
+      </button>
+    </th>
+  );
 }
 
 // ────────────────────────────────────────────────────────────────────────────
