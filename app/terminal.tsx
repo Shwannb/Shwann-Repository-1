@@ -120,7 +120,7 @@ function labelize(s: string | null): string {
 
 // ────────────────────────────────────────────────────────────────────────────
 
-export default function Terminal() {
+export default function Terminal({ authEnabled = false }: { authEnabled?: boolean }) {
   const [tab, setTab] = useState<Tab>('deals');
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
   const [deals, setDeals] = useState<Deal[]>([]);
@@ -208,17 +208,32 @@ export default function Terminal() {
   // close. When a new_deal frame arrives we pulse the indicator and trigger
   // a fetch so the table reflects the new row (and respects the active
   // filter server-side rather than us shipping filter logic to the client).
+  //
+  // Auth: the WS server runs on a different port than Next.js, so the
+  // session cookie can't be sent across the origin boundary. We fetch a
+  // short ticket from a same-origin endpoint (which IS gated by middleware)
+  // and pass it as a ?token= query param on the upgrade.
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const port = process.env.NEXT_PUBLIC_WS_PORT ?? '3030';
     const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = `${scheme}://${window.location.hostname}:${port}/ws/deals`;
     let ws: WebSocket | null = null;
     let retry = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
-    const connect = () => {
+    const connect = async () => {
       if (closed) return;
+      let token = '';
+      try {
+        const res = await fetch('/api/auth/ws-ticket', { cache: 'no-store' });
+        if (res.ok) {
+          const body = (await res.json()) as { ticket?: string };
+          token = body.ticket ?? '';
+        }
+      } catch { /* network — fall through with empty token */ }
+      if (closed) return;
+      const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+      const url = `${scheme}://${window.location.hostname}:${port}/ws/deals${qs}`;
       ws = new WebSocket(url);
       ws.onopen = () => { retry = 0; };
       ws.onmessage = (ev) => {
@@ -233,11 +248,11 @@ export default function Terminal() {
       ws.onclose = () => {
         if (closed) return;
         const delay = Math.min(30_000, 500 * 2 ** retry++);
-        timer = setTimeout(connect, delay);
+        timer = setTimeout(() => { void connect(); }, delay);
       };
       ws.onerror = () => { ws?.close(); };
     };
-    connect();
+    void connect();
     return () => {
       closed = true;
       if (timer) clearTimeout(timer);
@@ -318,8 +333,21 @@ export default function Terminal() {
 
       <footer className="border-t border-grid bg-surface px-3 py-1.5 text-[10px] text-fg-mute flex justify-between">
         <span>SAFYR CAPITAL PARTNERS · PHASE 1 · PUBLIC DATA ONLY — contact data via licensed provider in Phase 2</span>
-        <span className="flex gap-3">
+        <span className="flex gap-3 items-center">
           <button onClick={() => setShowHelp(true)} className="hover:text-amber" type="button">?</button>
+          {authEnabled && (
+            <button
+              type="button"
+              onClick={async () => {
+                await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' });
+                window.location.replace('/login');
+              }}
+              className="hover:text-amber"
+              data-testid="logout"
+            >
+              SIGN OUT
+            </button>
+          )}
           <span>v0.1</span>
         </span>
       </footer>

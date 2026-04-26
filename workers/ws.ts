@@ -13,11 +13,28 @@
 // production (docker-compose handles this).
 
 import { WebSocketServer, type WebSocket } from 'ws';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage } from 'node:http';
 import { Client } from 'pg';
+import { tokensEqual } from '../lib/auth';
 
 const PORT = Number(process.env.WS_PORT ?? 3030);
 const CHANNEL = 'deals_new';
+
+function expectedToken(): string | null {
+  const tok = process.env.SAFYR_API_TOKEN;
+  return tok && tok.length > 0 ? tok : null;
+}
+
+// When SAFYR_API_TOKEN is set, every WebSocket upgrade must carry a matching
+// ?token= query param. This is the WS-specific equivalent of the Next.js
+// middleware gate (cookies aren't sent across the 3000→3030 origin hop).
+export function isUpgradeAuthorized(req: IncomingMessage): boolean {
+  const expected = expectedToken();
+  if (expected === null) return true;
+  const url = new URL(req.url ?? '/', 'http://localhost');
+  const got = url.searchParams.get('token');
+  return got !== null && tokensEqual(expected, got);
+}
 
 interface DealPayload {
   id: string;
@@ -72,7 +89,22 @@ async function main() {
     res.end('safyr ws\n');
   });
 
-  const wss = new WebSocketServer({ server: httpServer, path: '/ws/deals' });
+  // We bind the WebSocketServer in noServer mode so we can run the auth
+  // check on the upgrade request before completing the handshake.
+  const wss = new WebSocketServer({ noServer: true });
+  httpServer.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname !== '/ws/deals') {
+      socket.destroy();
+      return;
+    }
+    if (!isUpgradeAuthorized(req)) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer realm="safyr"\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
   const clients = new Set<WebSocket>();
   wss.on('connection', (ws) => {
     clients.add(ws);

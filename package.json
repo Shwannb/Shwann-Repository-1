@@ -34,7 +34,8 @@
     "test:gdelt": "tsx scripts/test-gdelt.ts",
     "test:ws": "tsx scripts/test-ws.ts",
     "test:retention": "tsx scripts/test-retention.ts",
-    "test:all": "for t in edgar classifier api rss ch newsapi gdelt ws retention; do npx tsx scripts/test-$t.ts || exit 1; done"
+    "test:auth": "tsx scripts/test-auth.ts",
+    "test:all": "for t in edgar classifier api rss ch newsapi gdelt ws retention auth; do npx tsx scripts/test-$t.ts || exit 1; done"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

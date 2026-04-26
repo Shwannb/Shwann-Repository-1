@@ -153,6 +153,18 @@ Invalid filters return `400` with `{ error: "<field>: <reason>" }`.
 `GET ws://host:3030/ws/deals` — open a WebSocket to receive
 `{ type: 'new_deal', deal: {...} }` frames on every `INSERT deals`.
 
+## Authentication
+
+Set `SAFYR_API_TOKEN` to require authentication. When unset, the terminal and
+all `/api/*` endpoints are open (suitable for `npm run dev` and CI). When set:
+
+- API clients send `Authorization: Bearer <token>`. Wrong/missing → 401.
+- Browsers visit `/login`, paste the token, get an httpOnly + SameSite=Strict
+  session cookie. Sessions last 12 hours.
+- WebSocket clients fetch a ticket from `/api/auth/ws-ticket` (cookie-gated)
+  and pass it as `?token=...` on the upgrade.
+- `/api/health` is always public for healthcheck probes.
+
 ---
 
 ## Testing
