@@ -23,6 +23,8 @@
     "worker:gdelt": "tsx workers/gdelt.ts",
     "worker:gdelt:once": "tsx workers/gdelt.ts --once",
     "worker:ws": "tsx workers/ws.ts",
+    "worker:retention": "tsx workers/retention.ts",
+    "worker:retention:once": "tsx workers/retention.ts --once",
     "test:edgar": "tsx scripts/test-edgar.ts",
     "test:classifier": "tsx scripts/test-classifier.ts",
     "test:api": "tsx scripts/test-api.ts",
@@ -31,7 +33,8 @@
     "test:newsapi": "tsx scripts/test-newsapi.ts",
     "test:gdelt": "tsx scripts/test-gdelt.ts",
     "test:ws": "tsx scripts/test-ws.ts",
-    "test:all": "for t in edgar classifier api rss ch newsapi gdelt ws; do npx tsx scripts/test-$t.ts || exit 1; done"
+    "test:retention": "tsx scripts/test-retention.ts",
+    "test:all": "for t in edgar classifier api rss ch newsapi gdelt ws retention; do npx tsx scripts/test-$t.ts || exit 1; done"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.90.0",

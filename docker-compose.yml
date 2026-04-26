@@ -138,5 +138,16 @@ services:
     command: ["npm", "run", "worker:gdelt"]
     restart: unless-stopped
 
+  retention:
+    build: .
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgres://safyr:safyr@postgres:5432/safyr
+      RETENTION_DAYS: ${RETENTION_DAYS:-90}
+    command: ["npm", "run", "worker:retention"]
+    restart: unless-stopped
+
 volumes:
   safyr_pg:

@@ -78,6 +78,7 @@ Services in the compose file:
 | `ch`        | Companies House UK (idle until `CH_API_KEY` set)   | —    |
 | `newsapi`   | NewsAPI (idle until `NEWSAPI_KEY` set)             | —    |
 | `gdelt`     | GDELT DOC API (no key required)                    | —    |
+| `retention` | Daily orphan-news cleanup (RETENTION_DAYS, default 90) | — |
 
 ---
 
@@ -94,6 +95,7 @@ npm run worker:classifier    # needs ANTHROPIC_API_KEY
 npm run worker:edgar         # 10-min poll loop
 npm run worker:rss           # 10-min poll loop across 10 feeds
 npm run worker:gdelt         # 10-min poll loop
+npm run worker:retention     # 24h cleanup loop (orphan news_items)
 
 # Optional (require API keys)
 npm run worker:ch
@@ -168,6 +170,7 @@ npm run test:ch          # watchlist, per-company polling, dedupe
 npm run test:newsapi     # upsert, dedupe, error surfacing
 npm run test:gdelt       # seendate parse, upsert, dedupe
 npm run test:ws          # real end-to-end LISTEN/NOTIFY → WebSocket → client
+npm run test:retention   # orphan deletion policy (linked items kept)
 npm run test:all         # all of the above in order
 ```
 
